@@ -1,0 +1,158 @@
+<!-- 使用说明 Tab -->
+<div class="tab-panel space-y-4" data-tab="docs">
+  <!-- 搜索 -->
+  <div class="glass rounded-2xl p-4">
+    <input type="text" id="docs-search" placeholder="🔍 搜索功能说明..." oninput="filterDocs()" class="w-full bg-black/30 text-white px-4 py-2.5 rounded-xl border border-white/10 text-sm">
+  </div>
+
+  <!-- 目录导航 -->
+  <div class="glass rounded-2xl p-5">
+    <h3 class="text-white text-sm font-medium mb-3">📖 管理后台使用说明（按当前功能重写）</h3>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+      <button onclick="scrollToDoc('overview')" class="text-left p-2.5 rounded-xl bg-black/20 hover:bg-white/5 transition"><div class="text-sm">🍑</div><div class="text-[11px] text-gray-400 mt-0.5">系统概览</div></button>
+      <button onclick="scrollToDoc('nodes')" class="text-left p-2.5 rounded-xl bg-black/20 hover:bg-white/5 transition"><div class="text-sm">🌐</div><div class="text-[11px] text-gray-400 mt-0.5">节点</div></button>
+      <button onclick="scrollToDoc('users')" class="text-left p-2.5 rounded-xl bg-black/20 hover:bg-white/5 transition"><div class="text-sm">👥</div><div class="text-[11px] text-gray-400 mt-0.5">用户</div></button>
+      <button onclick="scrollToDoc('traffic')" class="text-left p-2.5 rounded-xl bg-black/20 hover:bg-white/5 transition"><div class="text-sm">📊</div><div class="text-[11px] text-gray-400 mt-0.5">流量</div></button>
+      <button onclick="scrollToDoc('whitelist')" class="text-left p-2.5 rounded-xl bg-black/20 hover:bg-white/5 transition"><div class="text-sm">🔒</div><div class="text-[11px] text-gray-400 mt-0.5">白名单</div></button>
+      <button onclick="scrollToDoc('logs')" class="text-left p-2.5 rounded-xl bg-black/20 hover:bg-white/5 transition"><div class="text-sm">📋</div><div class="text-[11px] text-gray-400 mt-0.5">日志</div></button>
+      <button onclick="scrollToDoc('abuse')" class="text-left p-2.5 rounded-xl bg-black/20 hover:bg-white/5 transition"><div class="text-sm">📈</div><div class="text-[11px] text-gray-400 mt-0.5">订阅统计</div></button>
+      <button onclick="scrollToDoc('notify')" class="text-left p-2.5 rounded-xl bg-black/20 hover:bg-white/5 transition"><div class="text-sm">🔔</div><div class="text-[11px] text-gray-400 mt-0.5">通知</div></button>
+      <button onclick="scrollToDoc('aws')" class="text-left p-2.5 rounded-xl bg-black/20 hover:bg-white/5 transition"><div class="text-sm">☁️</div><div class="text-[11px] text-gray-400 mt-0.5">AWS</div></button>
+      <button onclick="scrollToDoc('ops')" class="text-left p-2.5 rounded-xl bg-black/20 hover:bg-white/5 transition"><div class="text-sm">🧠</div><div class="text-[11px] text-gray-400 mt-0.5">AI 运维</div></button>
+      <button onclick="scrollToDoc('diary')" class="text-left p-2.5 rounded-xl bg-black/20 hover:bg-white/5 transition"><div class="text-sm">📔</div><div class="text-[11px] text-gray-400 mt-0.5">运营日记</div></button>
+      <button onclick="scrollToDoc('backup')" class="text-left p-2.5 rounded-xl bg-black/20 hover:bg-white/5 transition"><div class="text-sm">💾</div><div class="text-[11px] text-gray-400 mt-0.5">备份恢复</div></button>
+    </div>
+  </div>
+
+  <div class="doc-section glass rounded-2xl p-5" id="doc-overview">
+    <h3 class="text-white font-medium mb-3 flex items-center gap-2"><span class="text-lg">🍑</span> 系统概览</h3>
+    <div class="space-y-2 text-xs text-gray-300 leading-relaxed">
+      <p>本后台用于统一管理 <span class="text-white">节点、用户、流量、通知、AWS、AI 运维、备份</span> 等核心能力。</p>
+      <p>顶部 Tab 可切换模块；手机端建议使用下拉框快速切换。部分耗时功能（如 AWS 实例扫描、备份恢复）有明显加载/确认提示。</p>
+      <p class="text-amber-300">建议运维顺序：先看「🧠 运维」和「📋 日志」，再处理「🌐 节点 / 👥 用户」。</p>
+    </div>
+  </div>
+
+  <div class="doc-section glass rounded-2xl p-5" id="doc-nodes">
+    <h3 class="text-white font-medium mb-3 flex items-center gap-2"><span class="text-lg">🌐</span> 节点管理</h3>
+    <ul class="space-y-1 text-xs text-gray-300 leading-relaxed">
+      <li>• 一键部署节点：填写 IP 与 SSH 信息后自动部署。</li>
+      <li>• 节点支持编辑 host、重启 Xray、删除节点等操作。</li>
+      <li>• 支持节点等级控制（按用户等级分配可见节点）。</li>
+      <li>• 支持节点与 AWS 实例绑定后执行换 IP 操作。</li>
+      <li>• 节点备注可标记异常状态（如离线/被墙）用于运维判断。</li>
+    </ul>
+  </div>
+
+  <div class="doc-section glass rounded-2xl p-5" id="doc-users">
+    <h3 class="text-white font-medium mb-3 flex items-center gap-2"><span class="text-lg">👥</span> 用户管理</h3>
+    <ul class="space-y-1 text-xs text-gray-300 leading-relaxed">
+      <li>• 支持用户名搜索、分页浏览、状态查看（正常/冻结/封禁）。</li>
+      <li>• 可封禁/解封、重置订阅 Token。</li>
+      <li>• 可单独设置用户流量限额（支持无限）。</li>
+      <li>• 可设置用户到期时间（留空为永不过期）。</li>
+      <li>• 支持查看用户等级、最后登录时间、已用流量。</li>
+    </ul>
+  </div>
+
+  <div class="doc-section glass rounded-2xl p-5" id="doc-traffic">
+    <h3 class="text-white font-medium mb-3 flex items-center gap-2"><span class="text-lg">📊</span> 流量统计</h3>
+    <ul class="space-y-1 text-xs text-gray-300 leading-relaxed">
+      <li>• 支持按时段查看用户流量排行（今日/近7天/自定义日期）。</li>
+      <li>• 支持节点维度流量统计，便于识别高负载节点。</li>
+      <li>• 提供流量趋势图（Chart.js）用于观察增长走势。</li>
+    </ul>
+  </div>
+
+  <div class="doc-section glass rounded-2xl p-5" id="doc-whitelist">
+    <h3 class="text-white font-medium mb-3 flex items-center gap-2"><span class="text-lg">🔒</span> 白名单</h3>
+    <ul class="space-y-1 text-xs text-gray-300 leading-relaxed">
+      <li>• 注册白名单：在注册人数满额时仍允许指定用户名注册。</li>
+      <li>• 节点白名单：白名单用户可无视节点等级限制，访问全部节点。</li>
+      <li>• 两类白名单均支持后台直接添加/移除。</li>
+    </ul>
+  </div>
+
+  <div class="doc-section glass rounded-2xl p-5" id="doc-logs">
+    <h3 class="text-white font-medium mb-3 flex items-center gap-2"><span class="text-lg">📋</span> 日志中心</h3>
+    <ul class="space-y-1 text-xs text-gray-300 leading-relaxed">
+      <li>• 系统日志：记录系统行为、自动化动作、运维事件。</li>
+      <li>• 操作日志：记录后台用户操作行为。</li>
+      <li>• 支持分页查看与一键清空（危险操作，建议谨慎）。</li>
+    </ul>
+  </div>
+
+  <div class="doc-section glass rounded-2xl p-5" id="doc-abuse">
+    <h3 class="text-white font-medium mb-3 flex items-center gap-2"><span class="text-lg">📈</span> 订阅访问统计</h3>
+    <ul class="space-y-1 text-xs text-gray-300 leading-relaxed">
+      <li>• 统计订阅拉取次数、IP 数、最近拉取时间、平均间隔。</li>
+      <li>• 支持按时间窗口和排序方式筛选。</li>
+      <li>• 可仅查看高风险用户，并展开用户 IP/UA/时间线详情。</li>
+    </ul>
+  </div>
+
+  <div class="doc-section glass rounded-2xl p-5" id="doc-notify">
+    <h3 class="text-white font-medium mb-3 flex items-center gap-2"><span class="text-lg">🔔</span> 通知与全局设置</h3>
+    <ul class="space-y-1 text-xs text-gray-300 leading-relaxed">
+      <li>• 公告管理：设置前台公告，留空可清除。</li>
+      <li>• 注册人数限制：0 表示不限制。</li>
+      <li>• 默认流量限额：支持保存并一键应用到全部用户。</li>
+      <li>• Telegram 通知：配置 Bot Token/Chat ID，支持发送测试消息。</li>
+      <li>• 通知事件开关：节点离线、被墙、轮换、异常拉取等可独立开关。</li>
+    </ul>
+  </div>
+
+  <div class="doc-section glass rounded-2xl p-5" id="doc-aws">
+    <h3 class="text-white font-medium mb-3 flex items-center gap-2"><span class="text-lg">☁️</span> AWS 集成</h3>
+    <ul class="space-y-1 text-xs text-gray-300 leading-relaxed">
+      <li>• 账号管理：新增/编辑/删除 AWS 账号，支持 SOCKS5 代理验证。</li>
+      <li>• 实例仪表盘：查看实例状态，执行开机/关机/终止/换 IP。</li>
+      <li>• 节点绑定：节点可绑定 EC2 或 Lightsail 实例，便于一键换 IP。</li>
+      <li>• 新建实例并部署：可直接创建实例并自动部署节点服务。</li>
+    </ul>
+  </div>
+
+  <div class="doc-section glass rounded-2xl p-5" id="doc-ops">
+    <h3 class="text-white font-medium mb-3 flex items-center gap-2"><span class="text-lg">🧠</span> AI 运维</h3>
+    <ul class="space-y-1 text-xs text-gray-300 leading-relaxed">
+      <li>• 运维看板显示：节点在线概况、最近巡检、今日巡检/换IP/修复次数。</li>
+      <li>• 运维配置项：自动换 IP、自动修复、自动扩缩容、面板守护等。</li>
+      <li>• 事件时间线：展示 health_check、换 IP、修复、部署等运维事件。</li>
+      <li>• 诊断记录：汇总自动诊断和处理历史，便于复盘。</li>
+    </ul>
+  </div>
+
+  <div class="doc-section glass rounded-2xl p-5" id="doc-diary">
+    <h3 class="text-white font-medium mb-3 flex items-center gap-2"><span class="text-lg">📔</span> 运营日记</h3>
+    <ul class="space-y-1 text-xs text-gray-300 leading-relaxed">
+      <li>• 记录运维中的关键动作与结论（修复、换 IP、部署、里程碑等）。</li>
+      <li>• 支持按时间线查看，便于后续追踪和交接。</li>
+      <li>• 建议把“做了什么 + 为什么做 + 结果如何”写清楚。</li>
+    </ul>
+  </div>
+
+  <div class="doc-section glass rounded-2xl p-5" id="doc-backup">
+    <h3 class="text-white font-medium mb-3 flex items-center gap-2"><span class="text-lg">💾</span> 备份与恢复</h3>
+    <ul class="space-y-1 text-xs text-gray-300 leading-relaxed">
+      <li>• 支持手动创建数据库备份并查看备份列表。</li>
+      <li>• 支持下载历史备份文件。</li>
+      <li>• 支持从指定备份恢复（恢复前会有确认提示）。</li>
+      <li class="text-amber-300">• 恢复会覆盖当前数据，建议先手动再备份一次并在低峰期操作。</li>
+    </ul>
+  </div>
+</div>
+
+<script nonce="<%= nonce %>">
+function scrollToDoc(id) {
+  const el = document.getElementById('doc-' + id);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function filterDocs() {
+  const q = document.getElementById('docs-search').value.toLowerCase().trim();
+  document.querySelectorAll('.doc-section').forEach(section => {
+    if (!q) { section.style.display = ''; return; }
+    section.style.display = section.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+</script>

@@ -1,0 +1,578 @@
+<!-- 用户管理 Tab -->
+<div class="tab-panel" data-tab="users">
+  <!-- 用户总数 + 搜索 -->
+  <div class="flex items-center justify-between mb-3">
+    <span class="text-gray-500 text-xs">共 <span class="text-white font-medium" id="users-total-count">-</span> 个用户</span>
+    <input type="text" id="user-search" placeholder="搜索用户名..." class="bg-black/30 text-white px-3 py-1.5 rounded-xl border border-white/10 text-xs w-40">
+  </div>
+
+  <!-- 移动端卡片容器 -->
+  <div class="sm:hidden space-y-3" id="users-cards">
+    <div class="text-center text-gray-500 text-sm py-8">加载中...</div>
+  </div>
+  <!-- 桌面端表格 -->
+  <div class="hidden sm:block glass rounded-2xl overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm text-left">
+        <thead class="text-gray-500 border-b border-white/5 text-xs">
+          <tr>
+            <th class="py-3 px-4">用户</th>
+            <th class="py-3 px-4 cursor-pointer hover:text-rose-400 transition select-none" onclick="sortUsers('id')">ID <span id="sort-icon-id" class="text-xs"></span></th>
+            <th class="py-3 px-4 cursor-pointer hover:text-rose-400 transition select-none" onclick="sortUsers('trust_level')">等级 <span id="sort-icon-trust_level" class="text-xs"></span></th>
+            <th class="py-3 px-4 cursor-pointer hover:text-rose-400 transition select-none" onclick="sortUsers('total_traffic')">已用/限额 <span id="sort-icon-total_traffic" class="text-xs">▼</span></th>
+            <th class="py-3 px-4 cursor-pointer hover:text-rose-400 transition select-none" onclick="sortUsers('expires_at')">到期 <span id="sort-icon-expires_at" class="text-xs"></span></th>
+            <th class="py-3 px-4 cursor-pointer hover:text-rose-400 transition select-none" onclick="sortUsers('last_login')">最后活跃 <span id="sort-icon-last_login" class="text-xs"></span></th>
+            <th class="py-3 px-4">状态</th>
+            <th class="py-3 px-4">操作</th>
+          </tr>
+        </thead>
+        <tbody class="text-gray-300" id="users-tbody">
+          <tr><td colspan="8" class="py-8 text-center text-gray-500">加载中...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <!-- 分页 -->
+    <div class="flex items-center justify-between px-4 py-3 border-t border-white/5">
+      <span class="text-gray-500 text-xs" id="users-page-info"></span>
+      <div class="flex gap-1" id="users-pagination"></div>
+    </div>
+  </div>
+  <!-- 移动端分页 -->
+  <div class="sm:hidden flex items-center justify-between mt-3">
+    <span class="text-gray-500 text-xs" id="users-page-info-m"></span>
+    <div class="flex gap-1" id="users-pagination-m"></div>
+  </div>
+
+  <script nonce="<%= nonce %>">
+  (function(){
+    const csrfToken = '<%= csrfToken %>';
+    window._csrf = csrfToken;
+    let _searchTimer = null;
+    let _userSortBy = 'total_traffic';
+    let _userSortDir = 'DESC';
+    const _userNameById = new Map();
+    const _userExpiryById = new Map();
+
+    function _escHtml(v) {
+      if (v == null) return '';
+      return String(v)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function _safeAvatarUrl(url) {
+      if (!url) return '';
+      const raw = String(url).trim();
+      if (!raw) return '';
+      if (/^https?:\/\//i.test(raw) || raw.startsWith('/')) return _escHtml(raw);
+      return '';
+    }
+
+    window.setTrafficLimitById = function(userId, currentLimit) {
+      const username = _userNameById.get(userId) || String(userId);
+      setTrafficLimit(userId, username, currentLimit);
+    };
+    window.setExpiryById = function(userId) {
+      const username = _userNameById.get(userId) || String(userId);
+      const currentExpiry = _userExpiryById.get(userId) || '';
+      setExpiry(userId, username, currentExpiry);
+    };
+
+    window.sortUsers = function(col) {
+      if (_userSortBy === col) {
+        _userSortDir = _userSortDir === 'DESC' ? 'ASC' : 'DESC';
+      } else {
+        _userSortBy = col;
+        _userSortDir = 'DESC';
+      }
+      // 更新图标
+      document.querySelectorAll('[id^="sort-icon-"]').forEach(el => el.textContent = '');
+      const icon = document.getElementById('sort-icon-' + col);
+      if (icon) icon.textContent = _userSortDir === 'DESC' ? '▼' : '▲';
+      loadUsers(1);
+    }
+
+    function _fmtBytes(b) {
+      if (!b || b === 0) return '0 B';
+      const u = ['B','KB','MB','GB','TB'];
+      const i = Math.min(Math.floor(Math.log(b) / Math.log(1024)), u.length - 1);
+      return (b / Math.pow(1024, i)).toFixed(i > 0 ? 2 : 0) + ' ' + u[i];
+    }
+
+    window.loadUsers = async function(page = 1) {
+      const search = (document.getElementById('user-search').value || '').trim();
+      const params = new URLSearchParams({ page, search, sortBy: _userSortBy, sortDir: _userSortDir });
+      const resp = await fetch('/admin/api/users?' + params);
+      const data = await resp.json();
+      const tbody = document.getElementById('users-tbody');
+      const cards = document.getElementById('users-cards');
+      const total = data.total;
+      document.getElementById('users-total-count').textContent = total;
+
+      if (!data.rows || data.rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="py-8 text-center text-gray-500">无匹配用户</td></tr>';
+        cards.innerHTML = '<div class="text-center text-gray-500 text-sm py-8">无匹配用户</div>';
+        document.getElementById('users-page-info').textContent = '';
+        document.getElementById('users-pagination').innerHTML = '';
+        document.getElementById('users-page-info-m').textContent = '';
+        document.getElementById('users-pagination-m').innerHTML = '';
+        return;
+      }
+
+      // 公共数据
+      _userNameById.clear();
+      _userExpiryById.clear();
+      const rowsHtml = data.rows.map(u => {
+        _userNameById.set(u.id, String(u.username || ''));
+        _userExpiryById.set(u.id, String(u.expires_at || ''));
+        const safeUsername = _escHtml(u.username || '');
+        const safeAvatar = _safeAvatarUrl(u.avatar_url);
+        const safeNodeLocId = _escHtml(u.nodeloc_id || '-');
+        const safeTrustLevel = _escHtml(u.trust_level || 0);
+        const safeLastLogin = _escHtml(u.last_login || '-');
+        const safeUserId = Number(u.id) || 0;
+        const statusClass = u.is_blocked ? 'bg-red-500/20 text-red-300' : u.is_frozen ? 'bg-blue-500/20 text-blue-300' : 'bg-emerald-500/20 text-emerald-300';
+        const statusText = u.is_blocked ? '已封禁' : u.is_frozen ? '已冻结' : '正常';
+        const blockBtnClass = u.is_blocked ? 'text-emerald-400' : 'text-red-400';
+        const blockBtnText = u.is_blocked ? '解封' : '封禁';
+        const limitText = u.traffic_limit ? _fmtBytes(u.traffic_limit) : '∞';
+        const expiryText = u.expires_at ? u.expires_at.slice(0,10) : '永久';
+        const expiryClass = u.expires_at && new Date(u.expires_at) < new Date() ? 'text-red-400' : 'text-gray-400';
+        return { u, safeUsername, safeAvatar, safeNodeLocId, safeTrustLevel, safeLastLogin, safeUserId, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass };
+      });
+
+      // 桌面端表格
+      tbody.innerHTML = rowsHtml.map(({u, safeUsername, safeAvatar, safeNodeLocId, safeTrustLevel, safeLastLogin, safeUserId, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass}) => {
+        return `<tr class="border-b border-white/5 hover:bg-white/[0.02]">
+          <td class="py-3 px-4 flex items-center gap-2">
+            <img src="${safeAvatar}" class="w-6 h-6 rounded-full ring-1 ring-white/10 bg-gray-800" onerror="this.style.display='none'">
+            <span class="text-white text-sm">${safeUsername}</span>
+            ${u.is_admin ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">管理</span>' : ''}
+          </td>
+          <td class="py-3 px-4 text-xs text-gray-500">${safeNodeLocId}</td>
+          <td class="py-3 px-4 text-xs">${safeTrustLevel}</td>
+          <td class="py-3 px-4 text-xs text-gray-400">
+            ${_fmtBytes(u.total_traffic || 0)} / <span class="cursor-pointer text-cyan-400 hover:underline" onclick="setTrafficLimitById(${safeUserId}, ${u.traffic_limit || 0})">${limitText}</span>
+          </td>
+          <td class="py-3 px-4 text-xs"><span class="cursor-pointer ${expiryClass} hover:underline" onclick="setExpiryById(${safeUserId})">${expiryText}</span></td>
+          <td class="py-3 px-4 text-xs text-gray-500">${safeLastLogin}</td>
+          <td class="py-3 px-4"><span class="text-[10px] px-2 py-0.5 rounded-full ${statusClass}">${statusText}</span></td>
+          <td class="py-3 px-4 space-x-2">
+            <form method="POST" action="/admin/api/users/${safeUserId}/toggle-block" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button class="text-xs ${blockBtnClass} hover:underline">${blockBtnText}</button></form>
+            <form method="POST" action="/admin/api/users/${safeUserId}/reset-token" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button type="button" class="text-xs text-amber-400 hover:underline" onclick="_confirm('重置订阅？').then(ok=>{if(ok)this.closest('form').submit()})">重置</button></form>
+          </td>
+        </tr>`;
+      }).join('');
+
+      // 移动端卡片
+      cards.innerHTML = rowsHtml.map(({u, safeUsername, safeAvatar, safeNodeLocId, safeTrustLevel, safeLastLogin, safeUserId, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass}) => {
+        return `<div class="glass rounded-2xl p-4 space-y-2">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <img src="${safeAvatar}" class="w-6 h-6 rounded-full ring-1 ring-white/10 bg-gray-800" onerror="this.style.display='none'">
+              <span class="text-white text-sm font-medium">${safeUsername}</span>
+              ${u.is_admin ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">管理</span>' : ''}
+            </div>
+            <span class="text-[10px] px-2 py-0.5 rounded-full ${statusClass}">${statusText}</span>
+          </div>
+          <div class="grid grid-cols-2 gap-1.5 text-xs">
+            <div><span class="text-gray-500">ID</span><span class="block text-gray-400 mt-0.5">${safeNodeLocId}</span></div>
+            <div><span class="text-gray-500">等级</span><span class="block text-gray-300 mt-0.5">${safeTrustLevel}</span></div>
+            <div><span class="text-gray-500">流量</span><span class="block text-gray-400 mt-0.5">${_fmtBytes(u.total_traffic || 0)} / <span class="cursor-pointer text-cyan-400" onclick="setTrafficLimitById(${safeUserId}, ${u.traffic_limit || 0})">${limitText}</span></span></div>
+            <div><span class="text-gray-500">到期</span><span class="block mt-0.5 cursor-pointer ${expiryClass}" onclick="setExpiryById(${safeUserId})">${expiryText}</span></div>
+            <div class="col-span-2"><span class="text-gray-500">最后活跃</span><span class="text-gray-500 ml-2">${safeLastLogin}</span></div>
+          </div>
+          <div class="flex gap-3 pt-1.5 border-t border-white/5">
+            <form method="POST" action="/admin/api/users/${safeUserId}/toggle-block" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button class="text-xs ${blockBtnClass} hover:underline">${blockBtnText}</button></form>
+            <form method="POST" action="/admin/api/users/${safeUserId}/reset-token" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button type="button" class="text-xs text-amber-400 hover:underline" onclick="_confirm('重置订阅？').then(ok=>{if(ok)this.closest('form').submit()})">重置</button></form>
+          </div>
+        </div>`;
+      }).join('');
+
+      // 分页信息
+      const limit = 20;
+      const pages = Math.ceil(total / limit);
+      const start = (page - 1) * limit + 1;
+      const end = Math.min(page * limit, total);
+      document.getElementById('users-page-info').textContent = `第 ${start}-${end} 条，共 ${total} 条`;
+      document.getElementById('users-page-info-m').textContent = `${start}-${end} / ${total}`;
+
+      // 分页按钮
+      const nav = document.getElementById('users-pagination');
+      const navM = document.getElementById('users-pagination-m');
+      nav.innerHTML = '';
+      navM.innerHTML = '';
+      if (pages <= 1) return;
+      const mkBtn = (text, p, active) => {
+        const b = document.createElement('button');
+        b.textContent = text;
+        b.className = active ? 'px-2.5 py-1 rounded-lg text-xs bg-rose-600 text-white' : 'px-2.5 py-1 rounded-lg text-xs glass text-gray-400 hover:text-white hover:bg-white/10 transition';
+        if (!active) b.onclick = () => loadUsers(p);
+        return b;
+      };
+      if (page > 1) { nav.appendChild(mkBtn('‹', page - 1, false)); navM.appendChild(mkBtn('‹', page - 1, false)); }
+      let s = Math.max(1, page - 3), e = Math.min(pages, s + 6);
+      if (e - s < 6) s = Math.max(1, e - 6);
+      for (let p = s; p <= e; p++) { nav.appendChild(mkBtn(p, p, p === page)); navM.appendChild(mkBtn(p, p, p === page)); }
+      if (page < pages) { nav.appendChild(mkBtn('›', page + 1, false)); navM.appendChild(mkBtn('›', page + 1, false)); }
+    };
+
+    window.filterUsers = function() {
+      clearTimeout(_searchTimer);
+      _searchTimer = setTimeout(() => loadUsers(1), 300);
+    };
+
+    document.getElementById('user-search').addEventListener('input', filterUsers);
+
+    // 初始加载
+    loadUsers(1);
+  })();
+  </script>
+</div>
+
+<!-- 白名单 Tab -->
+<div class="tab-panel space-y-4" data-tab="whitelist">
+  <!-- 注册白名单 -->
+  <div class="glass rounded-2xl p-5">
+    <div class="mb-4">
+      <h3 class="text-white text-sm font-medium mb-1">🎫 注册白名单</h3>
+      <p class="text-gray-500 text-xs">注册人数满额时，白名单中的用户名仍可注册，注册成功后自动移除</p>
+    </div>
+    <form method="POST" action="/admin/api/register-whitelist/add" class="flex gap-2 mb-4">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="text" name="username" placeholder="输入 NodeLoc 用户名" class="flex-1 bg-black/30 text-white px-4 py-2 rounded-xl border border-white/10 text-sm" required>
+      <button class="bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded-xl text-sm transition">添加</button>
+    </form>
+    <div class="flex flex-wrap gap-2">
+      <% registerWhitelist.forEach(function(r) { %>
+        <form method="POST" action="/admin/api/register-whitelist/remove" class="inline">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="username" value="<%= r.username %>">
+          <button class="glass text-gray-300 px-3 py-1 rounded-full text-xs hover:bg-red-500/20 hover:text-red-300 transition"><%= r.username %> ✕</button>
+        </form>
+      <% }); %>
+      <% if (registerWhitelist.length === 0) { %><p class="text-gray-600 text-sm">暂无待注册用户</p><% } %>
+    </div>
+  </div>
+
+  <!-- 节点白名单 -->
+  <div class="glass rounded-2xl p-5">
+    <div class="mb-4">
+      <h3 class="text-white text-sm font-medium mb-1">🔓 节点白名单</h3>
+      <p class="text-gray-500 text-xs">白名单用户无视节点等级限制，可获取全部节点</p>
+    </div>
+    <form method="POST" action="/admin/api/whitelist/add" class="flex gap-2 mb-4">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="text" name="username" placeholder="输入用户名" class="flex-1 bg-black/30 text-white px-4 py-2 rounded-xl border border-white/10 text-sm" required>
+      <button class="bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded-xl text-sm transition">添加</button>
+    </form>
+    <div class="flex flex-wrap gap-2">
+      <% whitelist.forEach(function(w) { %>
+        <form method="POST" action="/admin/api/whitelist/remove" class="inline">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="nodeloc_id" value="<%= w.nodeloc_id %>">
+          <button class="glass text-gray-300 px-3 py-1 rounded-full text-xs hover:bg-red-500/20 hover:text-red-300 transition"><%= w.username || ('ID:' + w.nodeloc_id) %> ✕</button>
+        </form>
+      <% }); %>
+      <% if (whitelist.length === 0) { %><p class="text-gray-600 text-sm">白名单为空</p><% } %>
+    </div>
+  </div>
+</div>
+
+<div class="tab-panel" data-tab="logs">
+  <!-- 子 Tab 切换 -->
+  <div class="flex gap-2 mb-4">
+    <button onclick="switchLogType('system')" class="text-xs px-3 py-1.5 rounded-lg transition bg-rose-600 text-white" data-logtype="system">🖥️ 系统日志</button>
+    <button onclick="switchLogType('user')" class="text-xs px-3 py-1.5 rounded-lg transition glass text-gray-400 hover:text-white" data-logtype="user">👤 操作日志</button>
+    <button onclick="switchLogType('all')" class="text-xs px-3 py-1.5 rounded-lg transition glass text-gray-400 hover:text-white" data-logtype="all">📋 全部</button>
+    <div class="flex-1"></div>
+    <button onclick="clearLogs()" class="text-red-400 hover:text-red-300 text-xs">🗑 清空</button>
+  </div>
+
+  <div class="glass rounded-2xl overflow-hidden">
+    <div class="overflow-x-auto max-h-[500px] overflow-y-auto">
+      <table class="w-full text-sm text-left">
+        <thead class="text-gray-500 border-b border-white/5 text-xs sticky top-0" style="background:rgba(15,11,30,0.95)">
+          <tr><th class="py-3 px-4">时间</th><th class="py-3 px-4">来源</th><th class="py-3 px-4">操作</th><th class="py-3 px-4">详情</th></tr>
+        </thead>
+        <tbody class="text-gray-300" id="log-body">
+          <% logs.rows.forEach(function(l) { %>
+          <tr class="border-b border-white/5">
+            <td class="py-2 px-4 text-xs text-gray-500"><%= l.created_at %></td>
+            <td class="py-2 px-4 text-xs"><%= l.ip === 'system' ? '<span class="text-amber-400">系统</span>' : (l.username || '-') %></td>
+            <td class="py-2 px-4 text-xs"><%= l.action %></td>
+            <td class="py-2 px-4 text-xs text-gray-500 max-w-xs truncate"><%= l.detail || '' %></td>
+          </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+    <div class="flex items-center justify-between p-3 border-t border-white/5">
+      <span class="text-gray-600 text-xs" id="log-info">共 <%= logs.total %> 条</span>
+      <div class="flex gap-1" id="log-pager"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 订阅访问统计 Tab -->
+<div class="tab-panel space-y-4" data-tab="abuse">
+  <div class="glass rounded-2xl p-5">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-white text-sm font-medium">📈 订阅访问统计</h3>
+      <div class="flex items-center gap-2 flex-wrap">
+        <select id="substats-hours" class="bg-black/30 text-gray-300 text-xs px-2 py-1 rounded-lg border border-white/10">
+          <option value="1">1小时</option><option value="24" selected>24小时</option><option value="72">3天</option><option value="168">7天</option>
+        </select>
+        <select id="substats-sort" class="bg-black/30 text-gray-300 text-xs px-2 py-1 rounded-lg border border-white/10">
+          <option value="request">总请求</option><option value="success">成功数</option><option value="deny">拒绝数</option><option value="ok_rate">成功率</option><option value="ip">IP数量</option><option value="ua">UA数量</option><option value="last">最近拉取</option>
+        </select>
+        <label class="flex items-center gap-1 text-gray-400 text-xs"><input type="checkbox" id="substats-high" class="accent-rose-500"> 仅高风险用户</label>
+        <button onclick="loadSubStats(1)" class="bg-rose-600 hover:bg-rose-500 text-white text-xs px-3 py-1.5 rounded-lg transition">查询</button>
+      </div>
+    </div>
+    <div id="substats-overview" class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3"></div>
+    <div id="substats-result">
+      <p class="text-gray-600 text-sm text-center py-4">点击「查询」查看统计</p>
+    </div>
+    <div id="substats-pager" class="flex justify-center gap-2 mt-3"></div>
+  </div>
+  <div class="glass rounded-2xl p-5 hidden" id="substats-detail-panel">
+    <h3 class="text-white text-sm font-medium mb-3" id="substats-detail-title">用户详情</h3>
+    <div id="substats-detail"></div>
+  </div>
+</div>
+
+<!-- 通知 Tab（仅 TG 配置和事件开关） -->
+<div class="tab-panel space-y-4" data-tab="notify">
+  <div class="glass rounded-2xl p-5">
+    <h3 class="text-white text-sm font-medium mb-4">🔔 Telegram 通知配置</h3>
+    <div class="grid grid-cols-2 gap-3 mb-4">
+      <div>
+        <label class="text-gray-500 text-xs block mb-1">Bot Token</label>
+        <input type="password" id="tg-token" value="" placeholder="<%= tgBotToken ? '已配置（留空保留原值）' : '123456:ABC-DEF...' %>" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      </div>
+      <div>
+        <label class="text-gray-500 text-xs block mb-1">Chat ID</label>
+        <input type="text" id="tg-chat-id" value="<%= (typeof tgChatId !== 'undefined' ? tgChatId : '') %>" placeholder="-100123456789" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      </div>
+    </div>
+    <div class="flex gap-2 mb-6">
+      <button onclick="saveTG()" class="bg-rose-600 hover:bg-rose-500 text-white text-xs px-4 py-2 rounded-xl transition">保存</button>
+      <button onclick="testTG()" class="glass text-gray-300 hover:text-white text-xs px-4 py-2 rounded-xl transition">发送测试</button>
+    </div>
+    <h3 class="text-white text-sm font-medium mb-3">通知事件</h3>
+    <div class="space-y-2">
+      <% var events = [
+        { key: 'tg_on_node_down', label: '🔴 节点离线/恢复', desc: '节点上下线状态变化时通知' },
+        { key: 'tg_on_node_blocked', label: '🧱 节点被墙', desc: '检测到节点疑似被墙时通知' },
+        { key: 'tg_on_rotate', label: '🔄 自动轮换', desc: '每日轮换完成后通知' },
+        { key: 'tg_on_abuse', label: '⚠️ 订阅异常', desc: '检测到多IP拉取时通知' },
+        { key: 'tg_on_traffic', label: '📊 流量超标', desc: '用户日流量超10GB时通知' },
+        { key: 'tg_on_register', label: '👤 新用户注册', desc: '有新用户注册时通知' },
+        { key: 'tg_on_deploy', label: '🚀 节点部署', desc: '节点部署成功或失败时通知' }
+      ]; events.forEach(function(ev) { %>
+        <label class="flex items-center justify-between p-3 rounded-xl bg-black/20 cursor-pointer hover:bg-white/5 transition">
+          <div>
+            <span class="text-white text-sm"><%= ev.label %></span>
+            <span class="text-gray-600 text-xs ml-2"><%= ev.desc %></span>
+          </div>
+          <input type="checkbox" class="tg-event accent-rose-500" data-key="<%= ev.key %>" <%= (typeof tgEvents !== 'undefined' && tgEvents[ev.key]) ? 'checked' : '' %> onchange="toggleEvent(this)">
+        </label>
+      <% }); %>
+    </div>
+  </div>
+</div>
+
+<!-- 设置 Tab -->
+<div class="tab-panel space-y-4" data-tab="settings">
+  <div class="glass rounded-2xl p-5">
+    <h3 class="text-white text-sm font-medium mb-3">📢 公告管理</h3>
+    <div class="flex gap-2">
+      <input type="text" id="announcement-text" value="<%= announcement %>" placeholder="输入公告内容（留空则不显示）" class="flex-1 bg-black/30 text-white px-4 py-2 rounded-xl border border-white/10 text-sm">
+      <button onclick="saveAnnouncement()" class="bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded-xl text-sm transition">保存</button>
+    </div>
+  </div>
+
+  <div class="glass rounded-2xl p-5">
+    <h3 class="text-white text-sm font-medium mb-3">👥 注册人数限制</h3>
+    <p class="text-gray-600 text-xs mb-3">设为 0 表示不限制，当前已注册 <span class="text-rose-400"><%= userCount %></span> 人</p>
+    <div class="flex gap-2">
+      <input type="number" id="max-users-input" value="<%= maxUsers %>" min="0" placeholder="0 = 不限制" class="flex-1 bg-black/30 text-white px-4 py-2 rounded-xl border border-white/10 text-sm">
+      <button onclick="saveMaxUsers()" class="bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded-xl text-sm transition">保存</button>
+    </div>
+  </div>
+
+  <div class="glass rounded-2xl p-5">
+    <h3 class="text-white text-sm font-medium mb-3">📦 默认流量限额</h3>
+    <p class="text-gray-600 text-xs mb-3">新用户注册时的默认流量上限（TB），0 = 无限</p>
+    <div class="flex flex-wrap gap-2">
+      <input id="default-traffic-limit" value="<%= defaultTrafficLimit ? (defaultTrafficLimit / 1099511627776).toFixed(2) : 0 %>" min="0" step="any" placeholder="0 = 无限" class="flex-1 min-w-[120px] bg-black/30 text-white px-4 py-2 rounded-xl border border-white/10 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
+      <span class="text-gray-500 text-sm self-center">TB</span>
+      <button onclick="saveDefaultTrafficLimit()" class="bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded-xl text-sm transition">保存</button>
+      <button onclick="applyDefaultTrafficLimit()" class="glass text-gray-200 px-4 py-2 rounded-xl text-sm hover:bg-white/10 transition whitespace-nowrap">应用到全部用户</button>
+    </div>
+  </div>
+</div>
+
+<!-- AWS Tab -->
+<div class="tab-panel space-y-4" data-tab="aws">
+  <!-- 实例仪表盘 -->
+  <div class="glass rounded-2xl p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-white text-sm font-medium">📊 实例仪表盘</h3>
+      <button type="button" onclick="loadAllInstances(true)" class="text-xs glass text-gray-300 hover:text-white px-3 py-1.5 rounded-xl transition">🔄 刷新实例</button>
+    </div>
+    <div id="aws-instances-loading" class="hidden text-center py-8 text-gray-500 text-sm">⏳ 加载中...</div>
+    <div id="aws-instances-container" class="text-center py-8 text-gray-500 text-xs">点击「🔄 刷新实例」加载</div>
+  </div>
+
+  <div class="glass rounded-2xl p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-white text-sm font-medium">☁️ AWS 配置</h3>
+      <span id="aws-status" class="text-xs px-2 py-0.5 rounded-full bg-gray-500/20 text-gray-400">检测中...</span>
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="text-gray-500 text-xs block mb-1">账号名称</label>
+        <input type="text" id="aws-name" placeholder="如 aws-01" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      </div>
+      <!-- 区域策略说明已移除，默认走系统 us-east-1 策略 -->
+      <div>
+        <label class="text-gray-500 text-xs block mb-1">Access Key ID</label>
+        <input type="password" id="aws-ak" placeholder="AKIA..." class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      </div>
+      <div class="col-span-2">
+        <label class="text-gray-500 text-xs block mb-1">Secret Access Key</label>
+        <input type="password" id="aws-sk" placeholder="xxxxxxxx" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      </div>
+      <div class="col-span-2">
+        <label class="text-gray-500 text-xs block mb-1">SOCKS5 代理 (可选)</label>
+        <div class="flex gap-2">
+          <input type="text" id="aws-socks-url" placeholder="socks5://user:pass@host:port" class="flex-1 bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+          <button type="button" onclick="testSocksProxy()" class="glass text-gray-300 hover:text-white px-4 py-2 rounded-xl text-sm transition">验证</button>
+        </div>
+        <p id="aws-socks-test-result" class="text-[11px] text-gray-500 mt-1"></p>
+      </div>
+      <div class="col-span-2">
+        <button type="button" onclick="saveAwsConfig()" class="w-full bg-rose-600 hover:bg-rose-500 text-white py-2 rounded-xl text-sm transition mt-1">新增账号</button>
+      </div>
+    </div>
+    <div id="aws-accounts" class="mt-3 space-y-2"></div>
+  </div>
+
+  <!-- 节点 AWS 绑定 -->
+  <div class="glass rounded-2xl p-5">
+    <h3 class="text-white text-sm font-medium mb-3">🔗 节点绑定 AWS 实例</h3>
+    <p class="text-gray-600 text-xs mb-3">绑定后，被墙时自动换 IP；也可手动换 IP</p>
+    <div class="space-y-2">
+      <% nodes.forEach(function(n) { %>
+      <div class="flex items-center justify-between p-3 rounded-xl bg-black/20">
+        <div class="flex items-center gap-2">
+          <span class="text-white text-sm"><%= n.name %></span>
+          <span class="text-gray-500 text-xs"><%= n.host %></span>
+          <% if (n.aws_instance_id) { %>
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300"><%= n.aws_type || 'ec2' %>: <%= n.aws_instance_id %> (账号#<%= n.aws_account_id || '-' %>)</span>
+          <% } %>
+        </div>
+        <div class="flex items-center gap-2">
+          <% if (n.aws_instance_id) { %>
+            <button type="button" onclick="swapNodeIp(<%= n.id %>, '<%= n.name %>')" class="text-xs bg-amber-600 hover:bg-amber-500 text-white px-3 py-1 rounded-lg transition">🔄 换 IP</button>
+            <button type="button" onclick="unbindAws(<%= n.id %>)" class="text-xs text-gray-500 hover:text-red-400">解绑</button>
+          <% } else { %>
+            <button type="button" onclick="showBindAws(<%= n.id %>)" class="text-xs text-blue-400 hover:text-blue-300">绑定</button>
+          <% } %>
+        </div>
+      </div>
+      <% }); %>
+    </div>
+  </div>
+
+  <!-- 账号编辑弹窗 -->
+  <div id="aws-edit-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60" onclick="if(event.target===this)closeAwsEditModal()">
+    <div class="glass rounded-2xl p-6 w-[92%] max-w-md border border-white/10">
+      <h3 class="text-white text-sm font-medium mb-4">编辑 AWS 账号</h3>
+      <input type="hidden" id="edit-aws-id">
+      <div class="space-y-3">
+        <div>
+          <label class="text-gray-500 text-xs block mb-1">备注 / 账号名</label>
+          <input type="text" id="edit-aws-name" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-gray-500 text-xs block mb-1">Access Key</label>
+            <input type="text" id="edit-aws-ak" readonly class="w-full bg-black/20 text-gray-400 px-3 py-2 rounded-xl border border-white/10 text-sm">
+          </div>
+          <div>
+            <label class="text-gray-500 text-xs block mb-1">Secret Key</label>
+            <input type="text" id="edit-aws-sk" readonly value="******** (已保存)" class="w-full bg-black/20 text-gray-400 px-3 py-2 rounded-xl border border-white/10 text-sm">
+          </div>
+        </div>
+        <div>
+          <label class="text-gray-500 text-xs block mb-1">SOCKS5 URL</label>
+          <div class="flex gap-2">
+            <input type="text" id="edit-aws-socks" placeholder="socks5://user:pass@host:port（留空清除）" class="flex-1 bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+            <button type="button" onclick="testSocksProxyInput('edit-aws-socks','edit-aws-socks-test')" class="glass text-gray-300 hover:text-white px-4 py-2 rounded-xl text-sm transition">验证</button>
+          </div>
+          <p id="edit-aws-socks-test" class="text-[11px] text-gray-500 mt-1"></p>
+        </div>
+        <div class="flex gap-2 pt-1">
+          <button type="button" onclick="saveAwsEdit()" class="flex-1 bg-rose-600 hover:bg-rose-500 text-white py-2 rounded-xl text-sm transition">保存修改</button>
+          <button type="button" onclick="closeAwsEditModal()" class="flex-1 glass text-gray-300 hover:text-white py-2 rounded-xl text-sm transition">取消</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 绑定弹窗 -->
+  <div id="aws-bind-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div class="glass rounded-2xl p-6 w-96">
+      <h3 class="text-white text-sm font-medium mb-4">绑定 AWS 实例</h3>
+      <input type="hidden" id="bind-node-id">
+      <div class="space-y-3">
+        <div>
+          <label class="text-gray-500 text-xs block mb-1">AWS 账号</label>
+          <select id="bind-account-id" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm"></select>
+        </div>
+        <div>
+          <label class="text-gray-500 text-xs block mb-1">实例类型</label>
+          <select id="bind-type" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+            <option value="ec2">EC2</option>
+            <option value="lightsail">Lightsail</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-gray-500 text-xs block mb-1">实例 ID / 名称</label>
+          <input type="text" id="bind-instance-id" placeholder="i-0abc123... 或 Lightsail 实例名" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+        </div>
+        <div>
+          <label class="text-gray-500 text-xs block mb-1">区域</label>
+          <select id="bind-region" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+            <option value="">默认区域</option>
+            <option value="us-east-1">us-east-1 (弗吉尼亚)</option>
+            <option value="us-west-2">us-west-2 (俄勒冈)</option>
+            <option value="ap-northeast-1">ap-northeast-1 (东京)</option>
+            <option value="ap-southeast-1">ap-southeast-1 (新加坡)</option>
+            <option value="ap-south-1">ap-south-1 (孟买)</option>
+            <option value="eu-west-1">eu-west-1 (爱尔兰)</option>
+            <option value="eu-central-1">eu-central-1 (法兰克福)</option>
+            <option value="ca-central-1">ca-central-1 (加拿大)</option>
+            <option value="sa-east-1">sa-east-1 (圣保罗)</option>
+            <option value="ap-east-1">ap-east-1 (香港)</option>
+            <option value="ap-southeast-2">ap-southeast-2 (悉尼)</option>
+            <option value="ap-northeast-2">ap-northeast-2 (首尔)</option>
+            <option value="ap-northeast-3">ap-northeast-3 (大阪)</option>
+            <option value="eu-west-2">eu-west-2 (伦敦)</option>
+          </select>
+        </div>
+        <div class="flex gap-2">
+          <button type="button" onclick="confirmBindAws()" class="flex-1 bg-rose-600 hover:bg-rose-500 text-white py-2 rounded-xl text-sm transition">确认绑定</button>
+          <button type="button" onclick="document.getElementById('aws-bind-modal').classList.add('hidden')" class="flex-1 glass text-gray-300 hover:text-white py-2 rounded-xl text-sm transition">取消</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>

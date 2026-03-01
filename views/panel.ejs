@@ -1,0 +1,415 @@
+<%- include('partials/head', { title: '节点面板' }) %>
+
+  <!-- 导航 -->
+  <nav class="glass-solid sticky top-0 z-40 px-6 py-3">
+    <div class="max-w-6xl mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-rose-500 to-orange-500 flex items-center justify-center text-sm">🍑</div>
+        <span class="text-white font-semibold hidden sm:block">小姨子的诱惑</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-gray-300 text-sm hidden sm:block"><%= user.name || user.username %></span>
+        <% if (user.is_admin) { %><a href="/admin" class="text-xs px-3 py-1.5 rounded-full bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition">管理</a><% } %>
+        <a href="/auth/logout" class="text-xs px-3 py-1.5 rounded-full glass text-gray-300 hover:text-red-400 transition">退出</a>
+      </div>
+    </div>
+  </nav>
+
+  <% if (announcement) { %>
+  <div class="max-w-6xl mx-auto px-4 sm:px-6 mt-4">
+    <div class="bg-rose-500/10 border border-rose-500/20 rounded-2xl">
+      <div class="px-4 py-2 flex items-center gap-2 text-xs">
+        <span class="text-rose-400 shrink-0">📢</span>
+        <div class="marquee-wrap">
+          <span class="animate-marquee text-rose-200/80"><%= announcement %></span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <% } %>
+
+  <main class="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+
+    <!-- 流量概览 -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="glass rounded-2xl p-4 stat-card" style="--accent-color:#f43f5e">
+        <p class="text-gray-500 text-xs mb-1">节点在线用户</p>
+        <p class="text-rose-400 text-lg font-bold" id="online-count">0 人</p>
+      </div>
+      <div class="glass rounded-2xl p-4 stat-card" style="--accent-color:#8b5cf6">
+        <p class="text-gray-500 text-xs mb-1">全站已用</p>
+        <p class="text-violet-400 text-lg font-bold" id="global-traffic"><%= formatBytes(globalTraffic.total_up + globalTraffic.total_down) %></p>
+      </div>
+      <div class="glass rounded-2xl p-4 stat-card" style="--accent-color:#fb923c">
+        <p class="text-gray-500 text-xs mb-1">已用流量</p>
+        <p class="text-orange-400 text-lg font-bold" id="used-traffic"><%= formatBytes(traffic.total_up + traffic.total_down) %></p>
+      </div>
+      <div class="glass rounded-2xl p-4 stat-card" style="--accent-color:#06b6d4">
+        <p class="text-gray-500 text-xs mb-1"><%= expiresAt ? '剩余流量 / 到期' : '剩余流量' %></p>
+        <p class="text-cyan-400 text-lg font-bold" id="remaining-traffic">
+          <%= trafficLimit > 0 ? formatBytes(Math.max(0, trafficLimit - traffic.total_up - traffic.total_down)) : '∞' %>
+          <% if (expiresAt) { %>
+            <% const _daysLeft = Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 86400000); %>
+            <span class="text-xs <%= _daysLeft <= 3 ? 'text-red-400' : 'text-gray-500' %> ml-1">· <%= _daysLeft > 0 ? _daysLeft + '天' : '已过期' %></span>
+          <% } %>
+        </p>
+      </div>
+    </div>
+
+    <!-- 订阅链接 -->
+    <div class="glass rounded-2xl p-5">
+      <% const _launchDate = new Date('2026-02-23T00:00:00+08:00'); const _runDays = Math.floor((Date.now() - _launchDate.getTime()) / 86400000); %>
+      <% const _resetLabels = { 0: '每7天', 1: '每7天', 2: '每15天', 3: '每月', 4: '永不' }; %>
+      <div class="flex items-center justify-between mb-3 flex-wrap gap-1.5">
+        <div class="flex items-center gap-2 text-[11px]">
+          <h2 class="text-white font-semibold text-sm">📡 个人订阅</h2>
+          <span class="text-gray-600">🍑 已运行 <span class="text-gray-400"><%= _runDays %></span> 天 · Lv.<%= user.trust_level || 0 %></span>
+        </div>
+        <div class="text-[11px] text-gray-400">
+          UUID 重置：<span id="uuid-reset-countdown" class="text-rose-300">计算中...</span> <span class="text-gray-600">(每天)</span> · 订阅重置：<span id="sub-reset-countdown" class="text-cyan-300">计算中...</span> <span class="text-gray-600">(<%= _resetLabels[Math.min(user.trust_level || 0, 4)] %>)</span>
+        </div>
+      </div>
+      <div class="space-y-2">
+        <div>
+          <div class="text-[11px] text-gray-400 mb-1">🌐 IPv4 订阅（VLESS）</div>
+          <div class="flex flex-wrap gap-2 sub-btn-row">
+            <input type="text" readonly value="<%= subUrl %>" id="sub-link"
+                   class="flex-1 min-w-0 bg-black/30 text-rose-300 text-xs px-4 py-2.5 rounded-xl border border-white/5 font-mono">
+            <button onclick="copySubLink()" class="bg-rose-600 hover:bg-rose-500 text-white px-5 py-2.5 rounded-xl text-sm transition font-medium">复制</button>
+            <button onclick="showSubQr()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-sm transition font-medium">二维码</button>
+          </div>
+        </div>
+        <div>
+          <div class="text-[11px] text-gray-400 mb-1">🌐 IPv6 订阅（Shadowsocks）</div>
+          <div class="flex flex-wrap gap-2 sub-btn-row">
+            <input type="text" readonly value="<%= subUrl6 %>" id="sub6-link"
+                   class="flex-1 min-w-0 bg-black/30 text-cyan-300 text-xs px-4 py-2.5 rounded-xl border border-white/5 font-mono">
+            <button onclick="copySub6Link()" class="bg-rose-600 hover:bg-rose-500 text-white px-5 py-2.5 rounded-xl text-sm transition font-medium">复制</button>
+            <button onclick="showSub6Qr()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-sm transition font-medium">二维码</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 订阅二维码弹窗 -->
+    <div id="sub-qr-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 backdrop-blur-sm" onclick="if(event.target===this)hideSubQr()">
+      <div class="glass-solid rounded-2xl p-5 w-[92%] max-w-sm border border-white/10">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-white font-semibold text-sm">📱 扫码添加订阅</h3>
+          <button onclick="hideSubQr()" class="text-gray-400 hover:text-white text-lg leading-none">✕</button>
+        </div>
+        <p class="text-gray-400 text-xs mb-3">用手机客户端扫码即可导入当前账号订阅链接</p>
+        <div class="bg-white rounded-xl p-3 mx-auto w-fit mb-3">
+          <img id="sub-qr-img" alt="订阅二维码" class="w-[220px] h-[220px] block" />
+        </div>
+        <p class="text-[11px] text-gray-500 break-all font-mono select-all" id="sub-qr-text"></p>
+      </div>
+    </div>
+
+    <!-- 蜜桃酱卡片已移除，数据展示在气泡面板中 -->
+
+    <!-- 节点列表（按分组展示） -->
+    <div>
+      <div class="flex items-center justify-between mb-3 gap-2">
+        <h2 class="text-white font-semibold">🌐 可用节点</h2>
+        <div class="flex items-center gap-2">
+          <span class="text-gray-600 text-xs"><%= userNodes.length %> 个节点</span>
+        </div>
+      </div>
+      <div class="mb-3">
+        <input id="node-search" type="text" placeholder="搜索节点名 / 地区 / 协议 (vless/ss)..." oninput="filterNodes(this.value)" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm" />
+      </div>
+      <%
+        // 按 group_name 分组
+        const _groups = {};
+        userNodes.forEach(n => {
+          const g = n.group_name || '🍑 小姨子';
+          if (!_groups[g]) _groups[g] = [];
+          _groups[g].push(n);
+        });
+        const _groupNames = Object.keys(_groups).sort((a, b) => {
+          const order = ['小姨子'];
+          const ai = order.indexOf(a) === -1 ? 99 : order.indexOf(a);
+          const bi = order.indexOf(b) === -1 ? 99 : order.indexOf(b);
+          return ai - bi || a.localeCompare(b);
+        });
+      %>
+      <% _groupNames.forEach(gName => { %>
+        <% if (_groupNames.length > 1) { %>
+        <h3 class="text-gray-400 text-sm font-medium mb-2 mt-4 flex items-center gap-1.5">
+          <span class="w-1 h-4 rounded-full bg-rose-500/50"></span> <%= gName %>
+          <span class="text-gray-600 text-xs">(<%= _groups[gName].length %>)</span>
+        </h3>
+        <% } %>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 node-card-grid mb-3">
+        <% if (userNodes.length === 0 && gName === _groupNames[0]) { %>
+          <div class="glass rounded-2xl p-8 col-span-full text-center">
+            <p class="text-gray-500">暂无可用节点</p>
+          </div>
+        <% } else { _groups[gName].forEach(function(n) { %>
+          <div class="glass rounded-2xl p-4 node-card" data-protocol="<%= (n.protocol || '').toLowerCase() %>" data-search="<%= (n.name || '') + ' ' + (n.region || '') + ' ' + (n.protocol || '') + ' ' + (n.tags || '') %>">
+            <div class="flex items-center justify-between mb-2.5">
+              <div class="flex items-center gap-2 min-w-0">
+                <% if (n.remark && n.remark.includes('被墙')) { %>
+                  <span class="shrink-0 inline-block w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]" title="被墙"></span>
+                <% } else if (n.remark && n.remark.includes('离线')) { %>
+                  <span class="shrink-0 inline-block w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]" title="离线"></span>
+                <% } else if (n.is_active) { %>
+                  <span class="shrink-0 inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" title="在线"></span>
+                <% } else { %>
+                  <span class="shrink-0 inline-block w-2.5 h-2.5 rounded-full bg-yellow-400 shadow-[0_0_6px_rgba(250,204,21,0.6)]" title="检测中"></span>
+                <% } %>
+                <h3 class="text-white font-semibold text-sm truncate"><%= n.name %></h3>
+              </div>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <% if (nodeAiTags[n.id] && nodeAiTags[n.id].includes('ai_swap')) { %>
+                  <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 whitespace-nowrap">🔄 AI换IP</span>
+                <% } %>
+              </div>
+            </div>
+            <% if (n.region) { %><p class="text-gray-400 text-xs mb-3"><%= n.region %><% if (n.tags) { %> · <span class="text-gray-500 text-[11px]"><%= n.tags %></span><% } %></p><% } %>
+            <div class="bg-black/30 rounded-lg p-2.5 mb-2.5 overflow-hidden">
+              <code class="text-rose-300 text-[11px] break-all select-all font-mono vless-link leading-relaxed block max-h-20 overflow-y-auto" id="link-<%= n.id %>"><%= n.link %></code>
+            </div>
+            <button onclick="copyLink(<%= n.id %>)" class="w-full bg-rose-600/80 hover:bg-rose-500 focus-visible:ring-2 focus-visible:ring-rose-400 focus-visible:outline-none text-white text-xs py-2.5 rounded-lg transition font-medium">复制链接</button>
+          </div>
+        <% }); } %>
+      </div>
+      <% }); %>
+    </div>
+
+    <!-- 流量使用明细 (已移除) -->
+  </main>
+
+  <script nonce="<%= nonce %>">
+    function copyLink(id) {
+      navigator.clipboard.writeText(document.getElementById('link-' + id).textContent).then(() => toast('✅ 链接已复制'));
+    }
+    function copySubLink() {
+      navigator.clipboard.writeText(document.getElementById('sub-link').value).then(() => toast('✅ 订阅链接已复制'));
+    }
+    function showSubQr() {
+      const link = document.getElementById('sub-link').value;
+      const modal = document.getElementById('sub-qr-modal');
+      const img = document.getElementById('sub-qr-img');
+      document.getElementById('sub-qr-text').textContent = link;
+      img.src = '/sub-qr?t=' + Date.now();
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+    }
+    function hideSubQr() {
+      const modal = document.getElementById('sub-qr-modal');
+      modal.classList.remove('flex');
+      modal.classList.add('hidden');
+    }
+    function copySub6Link() {
+      navigator.clipboard.writeText(document.getElementById('sub6-link').value).then(() => toast('✅ IPv6 订阅链接已复制'));
+    }
+    function showSub6Qr() {
+      const link = document.getElementById('sub6-link').value;
+      const modal = document.getElementById('sub-qr-modal');
+      const img = document.getElementById('sub-qr-img');
+      document.getElementById('sub-qr-text').textContent = link;
+      // 用通用 QR 生成（复用同一弹窗，动态生成二维码）
+      img.src = '/sub6-qr?t=' + Date.now();
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+    }
+
+    function filterNodes(keyword) {
+      const q = (keyword || '').trim().toLowerCase();
+      document.querySelectorAll('.node-card').forEach(card => {
+        const text = (card.dataset.search || '').toLowerCase();
+        const protocol = (card.dataset.protocol || '').toLowerCase();
+
+        // 协议关键词精确匹配，避免 ss 命中 vless（vleSS）
+        if (q === 'ss' || q === 'vless') {
+          card.style.display = protocol === q ? '' : 'none';
+          return;
+        }
+
+        card.style.display = !q || text.includes(q) ? '' : 'none';
+      });
+    }
+
+    // formatBytes 前端版本
+    function fmtBytes(b) {
+      if (b <= 0) return '0 B';
+      const u = ['B','KB','MB','GB','TB'];
+      const i = Math.min(Math.floor(Math.log(b) / Math.log(1024)), u.length - 1);
+      return (b / Math.pow(1024, i)).toFixed(i > 0 ? 2 : 0) + ' ' + u[i];
+    }
+
+    // 实时刷新统计数据（每 30 秒）
+    function refreshStats() {
+      fetch('/api/stats').then(r => r.json()).then(d => {
+        const el = document.getElementById('online-count');
+        if (el) el.textContent = (d.online || 0) + ' 人';
+        const gt = document.getElementById('global-traffic');
+        if (gt) gt.textContent = fmtBytes((d.globalUp || 0) + (d.globalDown || 0));
+        const ut = document.getElementById('used-traffic');
+        if (ut) ut.textContent = fmtBytes(d.totalUsed || 0);
+        const rt = document.getElementById('remaining-traffic');
+        if (rt) {
+          // 保留到期信息 span
+          const expirySpan = rt.querySelector('span');
+          const txt = d.remaining < 0 ? '∞' : fmtBytes(d.remaining);
+          if (expirySpan) {
+            rt.childNodes[0].textContent = txt + ' ';
+          } else {
+            rt.textContent = txt;
+          }
+        }
+      }).catch(() => {});
+    }
+    refreshStats();
+    setInterval(refreshStats, 30000);
+
+    // 订阅重置倒计时
+    const nextUuidResetAt = <%- JSON.stringify(nextUuidResetAt || 0) %>;
+    const nextSubResetAt = <%- JSON.stringify(nextSubResetAt || 0) %>;
+
+    function fmtCountdown(ms) {
+      if (ms <= 0) return '即将重置';
+      const s = Math.floor(ms / 1000);
+      const d = Math.floor(s / 86400);
+      const h = Math.floor((s % 86400) / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      if (d > 0) return `${d}天 ${h}小时`;
+      if (h > 0) return `${h}小时 ${m}分钟`;
+      return `${m}分钟`;
+    }
+
+    function tickResetCountdown() {
+      const now = Date.now();
+      const u = document.getElementById('uuid-reset-countdown');
+      const t = document.getElementById('sub-reset-countdown');
+      if (u) u.textContent = fmtCountdown(nextUuidResetAt - now);
+      if (t) {
+        if (nextSubResetAt === -1) {
+          t.textContent = '永不重置 ✨';
+          t.className = 'text-emerald-400';
+        } else {
+          t.textContent = fmtCountdown(nextSubResetAt - now);
+        }
+      }
+    }
+    tickResetCountdown();
+    setInterval(tickResetCountdown, 30000);
+
+    loadTrafficDetail = function(){};
+  </script>
+
+  <!-- 🍑 蜜桃酱浮动气泡 -->
+  <style nonce="<%= nonce %>">
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+    #peach-bubble{position:fixed;bottom:max(20px,env(safe-area-inset-bottom,0px) + 12px);right:max(16px,env(safe-area-inset-right,0px) + 8px);z-index:999;width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#f43f5e,#f97316);display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 20px rgba(244,63,94,0.4);font-size:24px;transition:all .3s}
+    #peach-bubble .dot{position:absolute;top:2px;right:2px;width:10px;height:10px;border-radius:50%;background:#34d399;border:2px solid #0f0b1e;animation:pulse 2s infinite}
+    #peach-panel{display:none;position:fixed;bottom:max(80px,env(safe-area-inset-bottom,0px) + 72px);right:max(16px,env(safe-area-inset-right,0px) + 8px);z-index:998;width:min(300px,calc(100vw - 32px));background:rgba(15,11,30,0.95);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:16px;box-shadow:0 8px 40px rgba(0,0,0,0.6);max-height:calc(100vh - 120px);overflow-y:auto}
+    .pb-header{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+    .pb-title{color:#fff;font-size:14px;font-weight:600}
+    .pb-dot{width:8px;height:8px;border-radius:50%;background:#34d399;animation:pulse 2s infinite}
+    .pb-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+    .pb-stat{background:rgba(255,255,255,0.03);border-radius:10px;padding:8px;text-align:center}
+    .pb-stat-val{color:#fff;font-size:14px;font-weight:700}
+    .pb-stat-val.warn{color:#fbbf24}
+    .pb-stat-label{color:#6b7280;font-size:10px}
+    .pb-events-section{margin-bottom:8px}
+    .pb-events-title{color:#9ca3af;font-size:10px;margin-bottom:6px}
+    #pb-events{max-height:140px;overflow-y:auto}
+    .pb-footer{color:#4b5563;font-size:9px;text-align:center}
+    .pb-emoji{font-size:20px}
+    .pb-event{display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.03)}
+    .pb-event-icon{font-size:12px}
+    .pb-event-detail{color:#d1d5db;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .pb-event-time{color:#6b7280;font-size:9px}
+    .pb-event-empty{color:#6b7280;font-size:11px;text-align:center;padding:8px 0}
+    @media(max-width:400px){.sub-btn-row .bg-rose-600,.sub-btn-row .bg-indigo-600{padding-left:0.75rem;padding-right:0.75rem;font-size:0.75rem}}
+  </style>
+  <div id="peach-bubble" onclick="togglePeachPanel(event)" role="button" aria-label="蜜桃酱状态面板" tabindex="0">
+    🍑
+    <span class="dot" aria-hidden="true"></span>
+  </div>
+
+  <!-- 蜜桃酱展开面板 -->
+  <div id="peach-panel">
+    <div class="pb-header">
+      <span class="pb-emoji">🍑</span>
+      <span class="pb-title">蜜桃酱守护中</span>
+      <span class="pb-dot"></span>
+    </div>
+    <div class="pb-grid">
+      <div class="pb-stat">
+        <p class="pb-stat-val" id="pb-patrols">-</p>
+        <p class="pb-stat-label">今日巡检</p>
+      </div>
+      <div class="pb-stat">
+        <p class="pb-stat-val warn" id="pb-swaps">-</p>
+        <p class="pb-stat-label">今日换IP</p>
+      </div>
+    </div>
+    <div class="pb-events-section">
+      <p class="pb-events-title">最近动态</p>
+      <div id="pb-events"></div>
+    </div>
+    <p class="pb-footer">最近巡检: <span id="pb-last">-</span></p>
+  </div>
+
+  <!-- 蜜桃酱数据加载 -->
+  <script nonce="<%= nonce %>">
+  (function(){
+    function esc(s){if(s==null)return '';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+    const icons = {health_check:'💓',auto_swap_ip:'🔄',swap_ip:'🔄',ip_rotated:'🔄',node_recovered:'✅',auto_repair:'🔧',deploy:'🚀',node_blocked:'🚫',node_xray_down:'🔴'};
+    async function loadPeach() {
+      try {
+        const r = await fetch('/api/peach-status');
+        const d = await r.json();
+        // 顶部成就栏
+        const el = id => document.getElementById(id);
+        const set = (id, v) => { const e = el(id); if(e) e.textContent = v; };
+        set('peach-days', d.uptimeDays + ' 天');
+        set('peach-patrols', d.totalPatrols);
+        set('peach-fixes', d.totalSwaps + d.totalFixes);
+        set('peach-avail', d.nodeAvailability + '%');
+        // 气泡面板
+        el('pb-patrols').textContent = d.todayPatrols;
+        el('pb-swaps').textContent = d.todaySwaps;
+        el('pb-last').textContent = d.lastPatrolDisplay || '暂无';
+        const evDiv = el('pb-events');
+        if (d.recentEvents && d.recentEvents.length) {
+          evDiv.innerHTML = d.recentEvents.map(e =>
+            '<div class="pb-event">' +
+            '<span class="pb-event-icon">' + (icons[e.action]||'📋') + '</span>' +
+            '<div style="flex:1;min-width:0"><p class="pb-event-detail">' + esc(e.detail||e.action) + '</p>' +
+            '<p class="pb-event-time">' + esc(e.time) + '</p></div></div>'
+          ).join('');
+        } else {
+          evDiv.innerHTML = '<p class="pb-event-empty">暂无运维事件</p>';
+        }
+      } catch(e) { console.error('peach error', e); }
+    }
+    loadPeach();
+    setInterval(loadPeach, 60000);
+  })();
+  function togglePeachPanel(e) {
+    if (e) e.stopPropagation();
+    const p = document.getElementById('peach-panel');
+    p.style.display = p.style.display === 'none' ? 'block' : 'none';
+  }
+  // 键盘触发气泡
+  document.getElementById('peach-bubble').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePeachPanel(); }
+  });
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('#peach-bubble') && !e.target.closest('#peach-panel')) {
+      document.getElementById('peach-panel').style.display = 'none';
+    }
+  });
+  </script>
+
+  <!-- 品牌标识 -->
+  <div style="text-align:center;padding:16px 0 24px;color:#4b5563;font-size:11px">
+    由 🍑 蜜桃酱 AI 无人值守运维
+  </div>
+
+<%- include('partials/foot') %>

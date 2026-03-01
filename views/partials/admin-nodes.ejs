@@ -1,0 +1,428 @@
+<!-- 节点管理 Tab -->
+<div class="tab-panel active space-y-4" data-tab="nodes">
+  <div class="flex flex-wrap gap-2 mb-2">
+    <button onclick="doHealthCheck(this)" class="glass text-white px-4 py-2 rounded-xl text-sm hover:bg-white/10 transition">🔍 检测状态</button>
+    <form method="POST" action="/admin/api/rotate" class="inline">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button type="button" class="glass text-white px-4 py-2 rounded-xl text-sm hover:bg-white/10 transition" onclick="_confirm('确定轮换所有节点的UUID？').then(ok=>{if(ok)this.closest('form').submit()})">🔄 手动轮换UUID</button>
+    </form>
+    <button onclick="doUpdateAllAgents(this)" class="glass text-white px-4 py-2 rounded-xl text-sm hover:bg-white/10 transition">🔄 更新 Agent</button>
+  </div>
+
+  <!-- 移动端卡片布局 -->
+  <div class="sm:hidden space-y-3">
+    <% nodes.forEach(function(n) { %>
+    <div class="glass rounded-2xl p-4 space-y-3" data-node-id="<%= n.id %>">
+      <div class="flex items-center justify-between">
+        <span class="font-medium text-white text-sm"><%= n.name %></span>
+        <% if (n.protocol === 'ss') { %><span class="text-[10px] bg-cyan-800/60 text-cyan-300 px-1.5 py-0.5 rounded ml-1">SS</span><% } %>
+        <% if (n.ip_version === 6) { %><span class="text-[10px] bg-violet-800/60 text-violet-300 px-1.5 py-0.5 rounded ml-0.5">v6</span><% } %>
+        <div class="flex items-center gap-1.5" data-status-cell="<%= n.id %>">
+          <% if (n.remark && n.remark.includes('被墙')) { %>
+            <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]"></span>
+            <span class="text-xs text-red-400">🧱 被墙</span>
+          <% } else if (n.remark && n.remark.includes('离线')) { %>
+            <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]"></span>
+            <span class="text-xs text-red-400">离线</span>
+          <% } else if (n.remark && n.remark.includes('部署中')) { %>
+            <span class="inline-block w-2.5 h-2.5 rounded-full bg-yellow-400 shadow-[0_0_6px_rgba(250,204,21,0.6)]"></span>
+            <span class="text-xs text-yellow-400">部署中</span>
+          <% } else if (n.is_active) { %>
+            <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]"></span>
+            <span class="text-xs text-emerald-400">在线</span>
+          <% } else { %>
+            <span class="inline-block w-2.5 h-2.5 rounded-full bg-gray-500"></span>
+            <span class="text-xs text-gray-500">未知</span>
+          <% } %>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-2 text-xs">
+        <div><span class="text-gray-500">地址</span>
+          <code class="block text-gray-400 break-all mt-0.5" id="host-display-m-<%= n.id %>"><%= n.host %></code>
+        </div>
+        <div><span class="text-gray-500">端口</span><span class="block text-gray-300 mt-0.5"><%= n.port %></span></div>
+        <div><span class="text-gray-500">等级</span>
+          <select onchange="updateNodeLevel(<%= n.id %>, this.value)" class="block mt-0.5 bg-black/30 text-white text-xs px-2 py-1 rounded-lg border border-white/10">
+            <% for (let lv = 0; lv <= 4; lv++) { %>
+            <option value="<%= lv %>" <%= (n.min_level||0) === lv ? 'selected' : '' %>>Lv.<%= lv %></option>
+            <% } %>
+          </select>
+        </div>
+        <div><span class="text-gray-500">在线</span>
+          <% const _ocm = (typeof nodeOnlineCount !== 'undefined' && nodeOnlineCount.get(n.id)) || 0; %>
+          <span class="block mt-0.5 text-xs <%= _ocm > 0 ? 'text-emerald-400' : 'text-gray-500' %>"><%= _ocm %> 人</span>
+        </div>
+        <div><span class="text-gray-500">Agent</span>
+          <span class="block mt-0.5" data-agent-cell="<%= n.id %>">
+            <% if (onlineAgents.has(n.id)) { %>
+              <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" title="Agent 在线"></span>
+            <% } else { %>
+              <span class="inline-block w-2.5 h-2.5 rounded-full bg-gray-600" title="Agent 离线"></span>
+            <% } %>
+          </span>
+        </div>
+        <div><span class="text-gray-500">最后检测</span><span class="block text-gray-500 mt-0.5"><%= n.last_check || '-' %></span></div>
+      </div>
+      <div class="flex gap-2 pt-1 border-t border-white/5">
+        <button onclick="openNodeEditModalFromBtn(this)" data-id="<%= n.id %>" data-name="<%= n.name %>" data-host="<%= n.host %>" class="text-rose-400 hover:text-rose-300 text-xs">编辑</button>
+        <button onclick="restartXray(<%= n.id %>, this)" class="text-amber-400 hover:text-amber-300 text-xs">重启</button>
+        <form method="POST" action="/admin/api/nodes/<%= n.id %>/delete" class="inline">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button type="button" class="text-red-400 hover:text-red-300 text-xs" onclick="_confirm('确定删除？将停止远端 Xray 和 Agent 服务').then(ok=>{if(ok)this.closest('form').submit()})">删除</button>
+        </form>
+      </div>
+    </div>
+    <% }); %>
+  </div>
+
+  <!-- 桌面端表格布局 -->
+  <div class="hidden sm:block glass rounded-2xl overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm text-left">
+        <thead class="text-gray-500 border-b border-white/5 text-xs">
+          <tr>
+            <th class="py-3 px-4">名称</th><th class="py-3 px-4">地址</th><th class="py-3 px-4">端口</th>
+            <th class="py-3 px-4">等级</th><th class="py-3 px-4">在线</th><th class="py-3 px-4">状态</th><th class="py-3 px-4">Agent</th><th class="py-3 px-4 hidden md:table-cell">最后检测</th><th class="py-3 px-4">操作</th>
+          </tr>
+        </thead>
+        <tbody class="text-gray-300">
+          <% nodes.forEach(function(n) { %>
+          <tr class="border-b border-white/5 hover:bg-white/[0.02]" data-node-id="<%= n.id %>">
+            <td class="py-3 px-4 font-medium text-white text-xs"><%= n.name %></td>
+            <td class="py-3 px-4">
+              <code class="text-xs text-gray-400 break-all" id="host-display-<%= n.id %>"><%= n.host %></code>
+            </td>
+            <td class="py-3 px-4 text-xs"><%= n.port %></td>
+            <td class="py-3 px-4">
+              <select onchange="updateNodeLevel(<%= n.id %>, this.value)" class="bg-black/30 text-white text-xs px-2 py-1 rounded-lg border border-white/10">
+                <% for (let lv = 0; lv <= 4; lv++) { %>
+                <option value="<%= lv %>" <%= (n.min_level||0) === lv ? 'selected' : '' %>>Lv.<%= lv %></option>
+                <% } %>
+              </select>
+            </td>
+            <td class="py-3 px-4">
+              <% const _oc = (typeof nodeOnlineCount !== 'undefined' && nodeOnlineCount.get(n.id)) || 0; %>
+              <span class="text-xs <%= _oc > 0 ? 'text-emerald-400' : 'text-gray-500' %>"><%= _oc %> 人</span>
+            </td>
+            <td class="py-3 px-4" data-status-cell="<%= n.id %>">
+              <div class="flex items-center gap-1.5">
+                <% if (n.remark && n.remark.includes('被墙')) { %>
+                  <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]"></span>
+                  <span class="text-xs text-red-400" title="<%= n.remark %>">🧱 被墙</span>
+                <% } else if (n.remark && n.remark.includes('离线')) { %>
+                  <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]"></span>
+                  <span class="text-xs text-red-400" title="<%= n.remark %>">离线</span>
+                <% } else if (n.remark && n.remark.includes('部署中')) { %>
+                  <span class="inline-block w-2.5 h-2.5 rounded-full bg-yellow-400 shadow-[0_0_6px_rgba(250,204,21,0.6)]"></span>
+                  <span class="text-xs text-yellow-400">部署中</span>
+                <% } else if (n.is_active) { %>
+                  <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]"></span>
+                  <span class="text-xs text-emerald-400">在线</span>
+                <% } else { %>
+                  <span class="inline-block w-2.5 h-2.5 rounded-full bg-gray-500"></span>
+                  <span class="text-xs text-gray-500">未知</span>
+                <% } %>
+                <% if (n.remark && !['被墙','离线','部署中'].some(k => n.remark.includes(k))) { %>
+                  <span class="text-xs text-gray-500" title="<%= n.remark %>">(<%= n.remark.substring(0, 15) %>)</span>
+                <% } %>
+              </div>
+            </td>
+            <td class="py-3 px-4" data-agent-cell="<%= n.id %>">
+              <% if (onlineAgents.has(n.id)) { %>
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" title="Agent 在线"></span>
+              <% } else { %>
+                <span class="inline-block w-2.5 h-2.5 rounded-full bg-gray-600" title="Agent 离线"></span>
+              <% } %>
+            </td>
+            <td class="py-3 px-4 text-xs text-gray-500 hidden md:table-cell"><%= n.last_check || '-' %></td>
+            <td class="py-3 px-4 space-x-2">
+              <button onclick="openNodeEditModalFromBtn(this)" data-id="<%= n.id %>" data-name="<%= n.name %>" data-host="<%= n.host %>" class="text-rose-400 hover:text-rose-300 text-xs">编辑</button>
+              <button onclick="restartXray(<%= n.id %>, this)" class="text-amber-400 hover:text-amber-300 text-xs">重启</button>
+              <form method="POST" action="/admin/api/nodes/<%= n.id %>/delete" class="inline">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <button type="button" class="text-red-400 hover:text-red-300 text-xs" onclick="_confirm('确定删除？将停止远端 Xray 和 Agent 服务').then(ok=>{if(ok)this.closest('form').submit()})">删除</button>
+              </form>
+            </td>
+          </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 一键部署 -->
+  <details class="glass rounded-2xl">
+    <summary class="text-rose-400 text-sm cursor-pointer hover:text-rose-300 p-4">🚀 一键部署节点</summary>
+    <form method="POST" action="/admin/api/nodes/deploy-smart" class="px-4 pb-4 grid grid-cols-2 gap-3" onsubmit="return validateSmartDeploy(this)">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="text" name="host" placeholder="服务器 IP *" required class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      <input type="password" name="ssh_password" placeholder="SSH 密码 *" required minlength="1" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      <input type="number" name="ssh_port" placeholder="SSH 端口（默认 22）" min="1" max="65535" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+      <input type="text" name="ssh_user" placeholder="SSH 用户名（默认 root）" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+
+      <!-- 协议滑块 -->
+      <div class="col-span-2 flex items-center py-2" style="gap:2rem">
+        <div class="flex items-center gap-2 cursor-pointer select-none" onclick="toggleDeploy('vless')">
+          <input type="checkbox" name="enable_vless" checked style="position:absolute;width:0;height:0;opacity:0">
+          <div id="sw-vless" style="position:relative;width:40px;height:22px;flex-shrink:0">
+            <div id="sw-vless-track" style="position:absolute;inset:0;background:#e11d48;border-radius:11px;transition:background 0.2s"></div>
+            <div id="sw-vless-thumb" style="position:absolute;top:2px;left:2px;width:18px;height:18px;background:white;border-radius:50%;transition:transform 0.2s;transform:translateX(18px)"></div>
+          </div>
+          <span class="text-sm text-white">VLESS <span class="text-gray-400 text-xs">IPv4</span></span>
+        </div>
+        <div class="flex items-center gap-2 cursor-pointer select-none" onclick="toggleDeploy('ss')">
+          <input type="checkbox" name="enable_ss" style="position:absolute;width:0;height:0;opacity:0">
+          <div id="sw-ss" style="position:relative;width:40px;height:22px;flex-shrink:0">
+            <div id="sw-ss-track" style="position:absolute;inset:0;background:#4b5563;border-radius:11px;transition:background 0.2s"></div>
+            <div id="sw-ss-thumb" style="position:absolute;top:2px;left:2px;width:18px;height:18px;background:white;border-radius:50%;transition:transform 0.2s;transform:translateX(0)"></div>
+          </div>
+          <span class="text-sm text-white">Shadowsocks <span class="text-gray-400 text-xs">IPv6</span></span>
+        </div>
+      </div>
+
+      <!-- SS 加密方式（SS 开启时显示） -->
+      <div class="col-span-2 hidden" id="ss-method-row">
+        <select name="ss_method" class="w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+          <option value="aes-256-gcm">SS 加密：aes-256-gcm（推荐）</option>
+          <option value="aes-128-gcm">aes-128-gcm</option>
+          <option value="chacha20-ietf-poly1305">chacha20-ietf-poly1305</option>
+        </select>
+      </div>
+
+      <details class="col-span-2">
+        <summary class="text-gray-500 text-xs cursor-pointer hover:text-gray-300">🔗 Socks5 落地（可选，VLESS/SS/双协议都生效）</summary>
+        <div class="grid grid-cols-2 gap-3 mt-2">
+          <input type="text" name="socks5_host" placeholder="Socks5 地址" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+          <input type="number" name="socks5_port" placeholder="端口（默认 1080）" min="1" max="65535" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+          <input type="text" name="socks5_user" placeholder="用户名" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+          <input type="password" name="socks5_pass" placeholder="密码" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+        </div>
+      </details>
+
+      <p class="text-[11px] col-span-2" id="deploy-hint">
+        <span class="text-gray-400">当前模式：</span>
+        <span class="text-rose-400" id="deploy-mode-text">仅 VLESS（IPv4）</span>
+      </p>
+      <button class="bg-rose-600 hover:bg-rose-500 text-white py-2.5 rounded-xl text-sm col-span-2 transition font-medium" id="deploy-btn">🚀 部署</button>
+    </form>
+  </details>
+
+  <!-- 节点编辑弹窗 -->
+  <div id="node-edit-modal" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-black/60" onclick="closeNodeEditModal()"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+      <form id="node-edit-form" method="POST" class="w-full max-w-md glass rounded-2xl p-4 space-y-3 border border-white/10" onsubmit="return submitNodeEdit(this)">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <h3 class="text-white text-sm font-medium">编辑节点</h3>
+        <input type="hidden" name="id" id="node-edit-id">
+        <div>
+          <label class="text-xs text-gray-400">节点名称</label>
+          <input type="text" name="name" id="node-edit-name" required class="mt-1 w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+        </div>
+        <div>
+          <label class="text-xs text-gray-400">节点 IP</label>
+          <input type="text" name="host" id="node-edit-host" required class="mt-1 w-full bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+        </div>
+        <div class="flex justify-end gap-2 pt-1">
+          <button type="button" onclick="closeNodeEditModal()" class="px-3 py-1.5 rounded-lg text-xs text-gray-300 hover:text-white">取消</button>
+          <button id="node-edit-submit" class="px-3 py-1.5 rounded-lg text-xs bg-rose-600 hover:bg-rose-500 text-white">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script nonce="<%= nonce %>">
+// CSRF token
+const _csrf = '<%= csrfToken %>';
+
+function openNodeEditModal(id, name, host) {
+  const modal = document.getElementById('node-edit-modal');
+  const form = document.getElementById('node-edit-form');
+  document.getElementById('node-edit-id').value = id;
+  document.getElementById('node-edit-name').value = name || '';
+  document.getElementById('node-edit-host').value = host || '';
+  form.action = '/admin/api/nodes/' + id + '/update-basic';
+  modal.classList.remove('hidden');
+}
+
+function openNodeEditModalFromBtn(btn) {
+  const id = btn?.dataset?.id;
+  const name = btn?.dataset?.name || '';
+  const host = btn?.dataset?.host || '';
+  if (!id) return;
+  openNodeEditModal(id, name, host);
+}
+
+function closeNodeEditModal() {
+  document.getElementById('node-edit-modal').classList.add('hidden');
+}
+
+function submitNodeEdit(form) {
+  const name = (form.name.value || '').trim();
+  const host = (form.host.value || '').trim();
+  if (!name) { toast('节点名称不能为空', 2200, 'error'); return false; }
+  if (!host) { toast('节点 IP 不能为空', 2200, 'error'); return false; }
+  form.name.value = name;
+  form.host.value = host;
+  const btn = document.getElementById('node-edit-submit');
+  btn.textContent = '保存中...';
+  btn.disabled = true;
+  return true;
+}
+
+// 滑块开关切换
+function toggleDeploy(type) {
+  var cb = document.querySelector('[name="enable_' + type + '"]');
+  cb.checked = !cb.checked;
+  var track = document.getElementById('sw-' + type + '-track');
+  var thumb = document.getElementById('sw-' + type + '-thumb');
+  if (cb.checked) {
+    track.style.background = type === 'vless' ? '#e11d48' : '#06b6d4';
+    thumb.style.transform = 'translateX(18px)';
+  } else {
+    track.style.background = '#4b5563';
+    thumb.style.transform = 'translateX(0)';
+  }
+  updateDeployHint();
+}
+
+// 部署模式提示更新
+function updateDeployHint() {
+  const vless = document.querySelector('[name="enable_vless"]').checked;
+  const ss = document.querySelector('[name="enable_ss"]').checked;
+  const modeText = document.getElementById('deploy-mode-text');
+  const ssRow = document.getElementById('ss-method-row');
+  const btn = document.getElementById('deploy-btn');
+
+  ssRow.classList.toggle('hidden', !ss);
+
+  if (vless && ss) {
+    modeText.textContent = '⚡ 双协议（VLESS IPv4 + SS IPv6）';
+    modeText.style.color = '#fbbf24';
+    btn.style.background = '#d97706';
+    btn.textContent = '⚡ 双协议部署';
+  } else if (vless) {
+    modeText.textContent = '仅 VLESS（IPv4）';
+    modeText.style.color = '#fb7185';
+    btn.style.background = '#e11d48';
+    btn.textContent = '🚀 部署 VLESS';
+  } else if (ss) {
+    modeText.textContent = '仅 Shadowsocks（IPv6）';
+    modeText.style.color = '#22d3ee';
+    btn.style.background = '#0891b2';
+    btn.textContent = '🚀 部署 SS';
+  } else {
+    modeText.textContent = '⚠️ 请至少选择一个协议';
+    modeText.style.color = '#f87171';
+  }
+}
+
+// 统一部署表单校验
+function validateSmartDeploy(form) {
+  const host = form.host.value.trim();
+  const pwd = form.ssh_password.value;
+  const vless = form.enable_vless.checked;
+  const ss = form.enable_ss.checked;
+  if (!vless && !ss) { toast('请至少选择一个协议', 2500, 'error'); return false; }
+  if (!host) { toast('请填写服务器 IP', 2500, 'error'); form.host.focus(); return false; }
+  if (!pwd) { toast('请填写 SSH 密码', 2500, 'error'); form.ssh_password.focus(); return false; }
+  const btn = document.getElementById('deploy-btn');
+  btn.textContent = '⏳ 部署中...';
+  btn.classList.add('btn-loading');
+  return true;
+}
+
+// 检测状态 (AJAX)
+async function doHealthCheck(btn) {
+  const ok = await _confirm('确定要手动检测所有节点状态？');
+  if (!ok) return;
+  const origText = btn.textContent;
+  btn.textContent = '⏳ 检测中...';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/admin/api/health-check', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf },
+      body: JSON.stringify({})
+    });
+    const data = await resp.json();
+    if (data.ok && data.results) {
+      // 收集在线节点的 SSH host，同机节点也标记为在线
+      const onlineHosts = new Set();
+      data.results.forEach(r => { if (r.agent && r.online) onlineHosts.add(r.sshHost || ''); });
+      data.results.forEach(r => {
+        const isOnline = r.agent || onlineHosts.has(r.sshHost || '');
+        const agentCell = document.querySelector(`[data-agent-cell="${r.nodeId}"]`);
+        if (agentCell) {
+          agentCell.innerHTML = isOnline
+            ? `<span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" title="Agent 在线${r.agent ? '' : ' (同机)'}"></span>`
+            : `<span class="inline-block w-2.5 h-2.5 rounded-full bg-gray-600" title="Agent 离线"></span>`;
+        }
+      });
+      btn.textContent = `✅ 检测完成 (${data.results.filter(r => r.online).length}/${data.results.length})`;
+    } else {
+      btn.textContent = '❌ 检测失败';
+    }
+  } catch (e) {
+    btn.textContent = '❌ 网络错误';
+  }
+  setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 3000);
+}
+
+// 重启 Xray
+async function restartXray(nodeId, btn) {
+  const origText = btn.textContent;
+  btn.textContent = '⏳';
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`/admin/api/nodes/${nodeId}/restart-xray`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf },
+      body: JSON.stringify({})
+    });
+    const data = await resp.json();
+    btn.textContent = data.success ? '✅' : '❌';
+  } catch {
+    btn.textContent = '❌';
+  }
+  setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 2000);
+}
+
+// 节点分组编辑
+async function editNodeGroup(nodeId, groupName, tags) {
+  const g = await _prompt('设置分组名称', { value: groupName, placeholder: '留空则归入默认组', hint: '如：亚洲、欧美、高速线路' });
+  if (g === null) return;
+  const t = await _prompt('设置标签（逗号分隔）', { value: tags, placeholder: '如：IPLC,高速', hint: '多个标签逗号分隔' });
+  if (t === null) return;
+  const res = await fetch('/admin/api/nodes/' + nodeId + '/update-group', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf },
+    body: JSON.stringify({ group_name: g, tags: t })
+  });
+  if (res.ok) { toast('✅ 分组已更新'); setTimeout(() => location.reload(), 500); }
+  else toast('❌ 更新失败');
+}
+
+// 批量更新 Agent
+async function doUpdateAllAgents(btn) {
+  const ok = await _confirm('确定向所有在线 Agent 发送更新指令？');
+  if (!ok) return;
+  const origText = btn.textContent;
+  btn.textContent = '⏳ 更新中...';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/admin/api/agents/update-all', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf },
+      body: JSON.stringify({})
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      const ok = data.results.filter(r => r.success).length;
+      btn.textContent = `✅ ${ok}/${data.results.length} 成功`;
+    } else {
+      btn.textContent = '❌ 失败';
+    }
+  } catch {
+    btn.textContent = '❌ 网络错误';
+  }
+  setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 3000);
+}
+</script>
