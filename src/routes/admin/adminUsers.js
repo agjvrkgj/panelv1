@@ -6,11 +6,90 @@ const { parseIntId } = require('../../utils/validators');
 const { invalidateSubCache } = require('../panel');
 
 const router = express.Router();
+
+const MIN_PASSWORD_LENGTH = 8;
+const USERNAME_RE = /^[a-zA-Z0-9_.\-]{3,32}$/;
+
 function wantsJson(req) {
   const accept = req.headers.accept || '';
   const contentType = req.headers['content-type'] || '';
   return req.xhr || accept.includes('application/json') || contentType.includes('application/json');
 }
+
+// 创建用户（管理员）
+router.post('/users/create', (req, res) => {
+  const username = String(req.body?.username || '').trim();
+  const password = String(req.body?.password || '');
+  const isAdmin = !!req.body?.is_admin;
+  const trustLevel = parseInt(req.body?.trust_level, 10) || 0;
+
+  if (!USERNAME_RE.test(username)) {
+    return res.status(400).json({ ok: false, error: '用户名仅支持字母/数字/._-，长度 3-32' });
+  }
+  if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+    return res.status(400).json({ ok: false, error: `密码至少 ${MIN_PASSWORD_LENGTH} 位` });
+  }
+  if (password.length > 256) {
+    return res.status(400).json({ ok: false, error: '密码过长' });
+  }
+
+  let user;
+  try {
+    user = db.createUser({ username, password, isAdmin, trustLevel });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err.message || '创建失败' });
+  }
+
+  db.addAuditLog(req.user.id, 'user_create', `创建用户 ${username}${isAdmin ? ' (管理员)' : ''}`, req.clientIp || req.ip);
+  emitSyncAll();
+  res.json({ ok: true, user: { id: user.id, username: user.username, is_admin: user.is_admin } });
+});
+
+// 重置用户密码（管理员）
+router.post('/users/:id/set-password', (req, res) => {
+  const id = parseIntId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: '参数错误' });
+  const user = db.getUserById(id);
+  if (!user) return res.status(404).json({ ok: false, error: '用户不存在' });
+  const password = String(req.body?.password || '');
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return res.status(400).json({ ok: false, error: `密码至少 ${MIN_PASSWORD_LENGTH} 位` });
+  }
+  if (password.length > 256) {
+    return res.status(400).json({ ok: false, error: '密码过长' });
+  }
+  try {
+    db.setPassword(id, password);
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message || '重置密码失败' });
+  }
+  db.addAuditLog(req.user.id, 'user_set_password', `重置密码: ${user.username}`, req.clientIp || req.ip);
+  res.json({ ok: true });
+});
+
+// 删除用户（管理员；不能删自己、不能删最后一个管理员）
+router.post('/users/:id/delete', (req, res) => {
+  const id = parseIntId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: '参数错误' });
+  if (id === req.user.id) return res.status(400).json({ ok: false, error: '不能删除当前登录账号' });
+  const user = db.getUserById(id);
+  if (!user) return res.status(404).json({ ok: false, error: '用户不存在' });
+  if (user.is_admin) {
+    const adminCount = db.getDb()
+      .prepare('SELECT COUNT(*) as c FROM users WHERE is_admin = 1 AND is_blocked = 0').get().c;
+    if (adminCount <= 1) {
+      return res.status(400).json({ ok: false, error: '至少保留一个管理员' });
+    }
+  }
+  try {
+    db.deleteUser(id);
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message || '删除失败' });
+  }
+  db.addAuditLog(req.user.id, 'user_delete', `删除用户: ${user.username}`, req.clientIp || req.ip);
+  emitSyncAll();
+  res.json({ ok: true });
+});
 
 router.post('/users/:id/toggle-block', async (req, res) => {
   const id = parseIntId(req.params.id);

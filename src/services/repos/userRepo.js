@@ -1,5 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
 const { toSqlUtc } = require('../../utils/time');
+const { hashPassword, verifyPassword } = require('../../utils/password');
 
 let _getDb, _getSetting, _addAuditLog, _ensureUserHasAllNodeUuids, _removeFromRegisterWhitelist;
 
@@ -11,43 +12,81 @@ function init(deps) {
   _removeFromRegisterWhitelist = deps.removeFromRegisterWhitelist;
 }
 
-function findOrCreateUser(profile) {
-  const existing = _getDb().prepare('SELECT * FROM users WHERE nodeloc_id = ?').get(profile.id);
-  if (existing) {
-    const wasFrozen = existing.is_frozen;
-    _getDb().prepare(`
-      UPDATE users SET username = ?, name = ?, avatar_url = ?, trust_level = ?, email = ?, is_frozen = 0, last_login = datetime('now')
-      WHERE nodeloc_id = ?
-    `).run(profile.username, profile.name, profile.avatar_url, profile.trust_level, profile.email, profile.id);
-    const user = _getDb().prepare('SELECT * FROM users WHERE nodeloc_id = ?').get(profile.id);
-    if (wasFrozen) {
-      _ensureUserHasAllNodeUuids(user.id);
-      user._wasFrozen = true;
-    }
-    return user;
-  }
+/**
+ * 创建新用户（用户名 + 密码）
+ * @param {object} opts
+ * @param {string} opts.username
+ * @param {string} opts.password
+ * @param {boolean} [opts.isAdmin]  显式指定；不传时：第一个注册用户自动成为管理员
+ * @param {number} [opts.trustLevel]
+ * @param {string} [opts.name]
+ * @param {string} [opts.email]
+ * @param {number} [opts.trafficLimit]  覆盖默认流量上限（bytes）；不传时使用 settings.default_traffic_limit
+ * @param {string} [opts.expiresAt]  ISO 字符串或 SQL datetime
+ * @returns {object} 新用户行
+ */
+function createUser({ username, password, isAdmin, trustLevel = 0, name = null, email = null, trafficLimit, expiresAt = null } = {}) {
+  const uname = String(username || '').trim();
+  if (!uname) throw new Error('用户名不能为空');
+  if (uname.length > 64) throw new Error('用户名过长');
+  if (typeof password !== 'string' || password.length === 0) throw new Error('密码不能为空');
 
+  const db = _getDb();
+  const existing = db.prepare('SELECT id FROM users WHERE username = ? LIMIT 1').get(uname);
+  if (existing) throw new Error('用户名已被占用');
+
+  const pwHash = hashPassword(password);
   const subToken = uuidv4();
-  const userCount = _getDb().prepare('SELECT COUNT(*) as count FROM users').get().count;
-  const isAdmin = userCount === 0 ? 1 : 0;
-  const defaultLimit = parseInt(_getSetting('default_traffic_limit')) || 0;
+  const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+  const adminFlag = (typeof isAdmin === 'boolean') ? (isAdmin ? 1 : 0) : (userCount === 0 ? 1 : 0);
+  const defaultLimit = (typeof trafficLimit === 'number')
+    ? Math.max(0, Math.round(trafficLimit))
+    : (parseInt(_getSetting('default_traffic_limit')) || 0);
 
-  _getDb().prepare(`
-    INSERT INTO users (nodeloc_id, username, name, avatar_url, trust_level, email, sub_token, is_admin, traffic_limit, last_login)
+  const info = db.prepare(`
+    INSERT INTO users (username, name, email, password_hash, sub_token, is_admin, trust_level, traffic_limit, expires_at, last_login)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-  `).run(profile.id, profile.username, profile.name, profile.avatar_url, profile.trust_level, profile.email, subToken, isAdmin, defaultLimit);
+  `).run(uname, name, email, pwHash, subToken, adminFlag, trustLevel, defaultLimit, expiresAt || null);
 
-  const newUser = _getDb().prepare('SELECT * FROM users WHERE nodeloc_id = ?').get(profile.id);
-  if (isAdmin) console.log(`👑 首位用户 ${profile.username} 已自动设为管理员`);
+  const newUser = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
+  if (adminFlag) console.log(`👑 用户 ${uname} 已设为管理员`);
 
-  _addAuditLog(null, 'user_register', `新用户注册: ${profile.username}${isAdmin ? ' (管理员)' : ''}`, 'system');
+  _addAuditLog(null, 'user_register', `新用户创建: ${uname}${adminFlag ? ' (管理员)' : ''}`, 'system');
 
-  try { const { notify } = require('../notify'); notify.userRegister(profile.username, profile); } catch {}
+  try { const { notify } = require('../notify'); notify.userRegister(uname, { ...newUser, trust_level: trustLevel }); } catch {}
 
-  _ensureUserHasAllNodeUuids(newUser.id);
-  _removeFromRegisterWhitelist(profile.username);
-
+  if (typeof _ensureUserHasAllNodeUuids === 'function') {
+    _ensureUserHasAllNodeUuids(newUser.id);
+  }
+  if (typeof _removeFromRegisterWhitelist === 'function') {
+    _removeFromRegisterWhitelist(uname);
+  }
   return newUser;
+}
+
+function setPassword(userId, newPassword) {
+  if (!userId) throw new Error('userId 必填');
+  if (typeof newPassword !== 'string' || !newPassword) throw new Error('密码不能为空');
+  const pwHash = hashPassword(newPassword);
+  _getDb().prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(pwHash, userId);
+}
+
+function verifyUserPassword(username, password) {
+  const uname = String(username || '').trim();
+  if (!uname || !password) return null;
+  const row = _getDb().prepare('SELECT * FROM users WHERE username = ? LIMIT 1').get(uname);
+  if (!row || !row.password_hash) return null;
+  if (!verifyPassword(password, row.password_hash)) return null;
+  return row;
+}
+
+function renameUser(userId, newUsername) {
+  const uname = String(newUsername || '').trim();
+  if (!uname) throw new Error('用户名不能为空');
+  const db = _getDb();
+  const clash = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(uname, userId);
+  if (clash) throw new Error('用户名已被占用');
+  db.prepare('UPDATE users SET username = ? WHERE id = ?').run(uname, userId);
 }
 
 function getUserBySubToken(token) {
@@ -93,6 +132,13 @@ function getAllUsersPaged(limit = 20, offset = 0, search = '', sortBy = 'total_t
 
 function blockUser(id, blocked) {
   _getDb().prepare('UPDATE users SET is_blocked = ? WHERE id = ?').run(blocked ? 1 : 0, id);
+}
+
+function deleteUser(id) {
+  const db = _getDb();
+  db.prepare('DELETE FROM user_node_uuid WHERE user_id = ?').run(id);
+  db.prepare('DELETE FROM whitelist WHERE user_id = ?').run(id);
+  db.prepare('DELETE FROM users WHERE id = ?').run(id);
 }
 
 function setUserTrafficLimit(id, limitBytes) {
@@ -156,8 +202,12 @@ function autoFreezeExpiredUsers() {
 
 module.exports = {
   init,
-  findOrCreateUser, getUserBySubToken, getUserById, getUserCount,
-  getAllUsers, getAllUsersPaged, blockUser, setUserTrafficLimit,
-  isTrafficExceeded, freezeUser, unfreezeUser, autoFreezeInactiveUsers, resetSubToken,
+  // 新 API
+  createUser, setPassword, verifyUserPassword, renameUser, deleteUser,
+  // 查询
+  getUserBySubToken, getUserById, getUserCount, getAllUsers, getAllUsersPaged,
+  // 状态
+  blockUser, setUserTrafficLimit, isTrafficExceeded,
+  freezeUser, unfreezeUser, autoFreezeInactiveUsers, resetSubToken,
   setUserExpiry, autoFreezeExpiredUsers
 };

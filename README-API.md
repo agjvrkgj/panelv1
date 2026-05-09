@@ -29,19 +29,34 @@
 
 ### `GET /auth/login`
 
-登录页。
+登录页（用户名 + 密码）。
 
-### `GET /auth/nodeloc`
+### `POST /auth/login`
 
-跳转 NodeLoc OAuth 授权。
+用户名密码登录。表单字段：
 
-### `GET /auth/callback?state=...&code=...`
+- `username`
+- `password`
+- `_csrf`
 
-OAuth 回调，state 校验失败会重定向回登录页并附 error。
+成功后会话 Cookie 建立，`302` 重定向到 `/`。
+
+### `GET /auth/register`
+
+仅在**首次运行**（`users` 表为空）时可用，用于创建第一个管理员账号。
+
+### `POST /auth/register`
+
+首次运行注册。表单字段：
+
+- `username`
+- `password`
+- `confirm`
+- `_csrf`
 
 ### `GET /auth/logout`
 
-退出登录。
+退出登录并销毁会话。
 
 ### `POST /auth/temp-login`
 
@@ -111,7 +126,7 @@ IPv6 SS 订阅。可选：`?type=clash|singbox|v2ray`
 
 ### `POST /admin/api/whitelist/remove`
 
-表单字段：`nodeloc_id`
+表单字段：`user_id`
 
 ### `POST /admin/api/register-whitelist/add`
 
@@ -191,6 +206,23 @@ SS 节点部署。
 ### `GET /admin/api/users/:id/detail`
 
 用户综合详情（基础信息、流量、订阅访问时间线）。
+
+### `POST /admin/api/users/create`
+
+创建用户。JSON 或表单字段：
+
+- `username`（3-32，`[a-zA-Z0-9_.-]`）
+- `password`（≥ 8 位）
+- `trust_level`（0-4，可选，默认 0）
+- `is_admin`（可选）
+
+### `POST /admin/api/users/:id/set-password`
+
+重置密码。JSON：`{ "password": "..." }`（≥ 8 位）
+
+### `POST /admin/api/users/:id/delete`
+
+删除用户。不能删除当前登录账号，也不能把最后一个管理员删掉；会级联清理 `user_node_uuid` 与 `whitelist`。
 
 ### `POST /admin/api/users/:id/toggle-block`
 

@@ -1,11 +1,13 @@
 const express = require('express');
 const crypto = require('crypto');
-const passport = require('passport');
+const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
 const db = require('../services/database');
 const { emitSyncAll } = require('../services/configEvents');
 const { getClientIp, parseIpAllowlist, isIpAllowed } = require('../utils/clientIp');
-const { safeTokenEqual, isValidOAuthState } = require('../utils/securityTokens');
+const { safeTokenEqual } = require('../utils/securityTokens');
+const { hashPassword, verifyPassword } = require('../utils/password');
+const { notify } = require('../services/notify');
 
 const router = express.Router();
 const usedTempLoginTokens = new Set();
@@ -14,53 +16,133 @@ if (process.env.TEMP_LOGIN_ENABLED === 'true') {
   console.warn('[SECURITY] TEMP_LOGIN_ENABLED=true，请确保仅用于应急且已配置严格访问限制');
 }
 
+const MIN_PASSWORD_LENGTH = 8;
+const USERNAME_RE = /^[a-zA-Z0-9_.\-]{3,32}$/;
+
+function isFirstRun() {
+  try {
+    return db.getUserCount() === 0;
+  } catch {
+    return false;
+  }
+}
+
+function renderLogin(req, res, { error = '', info = '' } = {}) {
+  res.render('login', {
+    error: error || req.query.error || '',
+    info: info || req.query.info || '',
+    firstRun: isFirstRun(),
+  });
+}
+
+function findUserByUsername(username) {
+  if (!username) return null;
+  try {
+    return db.getDb()
+      .prepare('SELECT * FROM users WHERE username = ? LIMIT 1')
+      .get(String(username).trim()) || null;
+  } catch {
+    return null;
+  }
+}
+
+function validatePasswordPolicy(pw) {
+  if (typeof pw !== 'string' || pw.length < MIN_PASSWORD_LENGTH) {
+    return `密码至少 ${MIN_PASSWORD_LENGTH} 位`;
+  }
+  if (pw.length > 256) return '密码过长';
+  return null;
+}
+
 // 登录页
 router.get('/login', (req, res) => {
-  res.render('login', { error: req.query.error || '' });
+  renderLogin(req, res);
 });
 
-// 发起 OAuth
-router.get('/nodeloc', (req, res, next) => {
-  // 生成 state 防 CSRF
-  const state = crypto.randomBytes(16).toString('hex');
-  req.session.oauthState = state;
-  passport.authenticate('nodeloc', { state })(req, res, next);
-});
+// 用户名+密码登录
+router.post('/login', (req, res) => {
+  const username = String(req.body?.username || '').trim();
+  const password = String(req.body?.password || '');
+  const loginIp = getClientIp(req);
 
-// OAuth 回调
-const { notify } = require('../services/notify');
-
-router.get('/callback', (req, res, next) => {
-  const expectedState = req.session.oauthState;
-  const incomingState = req.query.state;
-  // OAuth state 必须严格匹配，防止登录 CSRF / 会话混淆
-  if (!isValidOAuthState(expectedState, incomingState)) {
-    req.session.oauthState = null;
-    return res.redirect('/auth/login?error=' + encodeURIComponent('登录状态校验失败，请重试'));
+  if (!username || !password) {
+    return renderLogin(req, res, { error: '请输入用户名和密码' });
   }
-  req.session.oauthState = null;
-  passport.authenticate('nodeloc', (err, user, info) => {
-    if (err) {
-      console.error('OAuth 错误:', err);
-      return res.redirect('/auth/login?error=' + encodeURIComponent('登录失败，请重试'));
-    }
-    if (!user) {
-      const msg = info?.message || '登录失败';
-      return res.redirect('/auth/login?error=' + encodeURIComponent(msg));
-    }
-    req.logIn(user, (err) => {
-      if (err) return res.redirect('/auth/login?error=' + encodeURIComponent('登录失败'));
-      // 登录后轮换 CSRF token 防止会话固定
-      delete req.session.csrfToken;
-      const loginIP = getClientIp(req);
-      db.addAuditLog(user.id, 'login', `用户 ${user.username} 登录`, loginIP);
-      // 如果用户刚被解冻，异步同步节点配置
-      if (user._wasFrozen) {
-        emitSyncAll();
-      }
-      res.redirect('/');
-    });
-  })(req, res, next);
+
+  const user = findUserByUsername(username);
+  // 无论用户是否存在都跑一次 verify，降低用户名枚举风险
+  const dummyHash = 'scrypt$16384$8$1$' + '0'.repeat(32) + '$' + '0'.repeat(128);
+  const ok = user && user.password_hash
+    ? verifyPassword(password, user.password_hash)
+    : verifyPassword(password, dummyHash);
+
+  if (!user || !user.password_hash || !ok) {
+    try { db.addAuditLog(null, 'login_fail', `登录失败：${username}`, loginIp); } catch {}
+    return renderLogin(req, res, { error: '用户名或密码错误' });
+  }
+
+  if (user.is_blocked) {
+    return renderLogin(req, res, { error: '账号已被封禁' });
+  }
+
+  // 登录成功：解冻 + 更新活跃时间
+  const wasFrozen = !!user.is_frozen;
+  try {
+    db.getDb().prepare(
+      "UPDATE users SET is_frozen = 0, last_login = datetime('now') WHERE id = ?"
+    ).run(user.id);
+  } catch {}
+  if (wasFrozen) emitSyncAll();
+
+  req.logIn(db.getUserById(user.id), (err) => {
+    if (err) return renderLogin(req, res, { error: '登录失败，请重试' });
+    // 登录后轮换 CSRF token 防止会话固定
+    delete req.session.csrfToken;
+    try { db.addAuditLog(user.id, 'login', `用户 ${user.username} 登录`, loginIp); } catch {}
+    res.redirect('/');
+  });
+});
+
+// 首次运行：允许创建第一个管理员账号
+router.get('/register', (req, res) => {
+  if (!isFirstRun()) {
+    return res.redirect('/auth/login?error=' + encodeURIComponent('注册已关闭，请联系管理员'));
+  }
+  res.render('register', { error: req.query.error || '' });
+});
+
+router.post('/register', (req, res) => {
+  if (!isFirstRun()) {
+    return res.redirect('/auth/login?error=' + encodeURIComponent('注册已关闭，请联系管理员'));
+  }
+  const username = String(req.body?.username || '').trim();
+  const password = String(req.body?.password || '');
+  const confirm = String(req.body?.confirm || '');
+  const loginIp = getClientIp(req);
+
+  if (!USERNAME_RE.test(username)) {
+    return res.render('register', { error: '用户名仅支持字母/数字/._-，长度 3-32' });
+  }
+  const pwErr = validatePasswordPolicy(password);
+  if (pwErr) return res.render('register', { error: pwErr });
+  if (password !== confirm) {
+    return res.render('register', { error: '两次输入的密码不一致' });
+  }
+
+  let user;
+  try {
+    user = db.createUser({ username, password, isAdmin: true });
+  } catch (err) {
+    console.error('[register] 创建首管理员失败', err);
+    return res.render('register', { error: err.message || '创建失败' });
+  }
+
+  req.logIn(user, (err) => {
+    if (err) return res.redirect('/auth/login?error=' + encodeURIComponent('注册成功，请登录'));
+    delete req.session.csrfToken;
+    try { db.addAuditLog(user.id, 'login', `首管理员 ${user.username} 登录`, loginIp); } catch {}
+    res.redirect('/admin');
+  });
 });
 
 const tempLoginLimiter = rateLimit({
@@ -154,10 +236,17 @@ router.post('/temp-login', tempLoginLimiter, (req, res) => {
 // 登出
 router.get('/logout', (req, res) => {
   if (req.user) {
-    db.addAuditLog(req.user.id, 'logout', `用户 ${req.user.username} 登出`, getClientIp(req));
+    try {
+      db.addAuditLog(req.user.id, 'logout', `用户 ${req.user.username} 登出`, getClientIp(req));
+    } catch {}
   }
   req.logout(() => {
-    res.redirect('/auth/login');
+    // 摧毁 session，防止重放
+    if (req.session && typeof req.session.destroy === 'function') {
+      req.session.destroy(() => res.redirect('/auth/login'));
+    } else {
+      res.redirect('/auth/login');
+    }
   });
 });
 

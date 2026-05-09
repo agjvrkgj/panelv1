@@ -73,7 +73,7 @@ function initTables() {
     -- 用户表
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY,
-      nodeloc_id INTEGER UNIQUE NOT NULL,
+      nodeloc_id INTEGER,
       username TEXT NOT NULL,
       name TEXT,
       avatar_url TEXT,
@@ -85,6 +85,7 @@ function initTables() {
       is_frozen INTEGER DEFAULT 0,
       traffic_limit INTEGER DEFAULT 0,
       max_devices INTEGER DEFAULT 3,
+      password_hash TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       last_login TEXT
     );
@@ -92,8 +93,9 @@ function initTables() {
     -- 白名单表
     CREATE TABLE IF NOT EXISTS whitelist (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE NOT NULL,
-      added_at TEXT DEFAULT (datetime('now'))
+      user_id INTEGER UNIQUE NOT NULL,
+      added_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
     -- 节点表
@@ -417,13 +419,94 @@ function initTables() {
 
   // 迁移：白名单表改用 nodeloc_id
   const wlCols = db.prepare("PRAGMA table_info(whitelist)").all().map(c => c.name);
-  if (!wlCols.includes('nodeloc_id')) {
+  if (!wlCols.includes('nodeloc_id') && !wlCols.includes('user_id')) {
     db.exec("DROP TABLE IF EXISTS whitelist");
     db.exec(`CREATE TABLE whitelist (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nodeloc_id INTEGER UNIQUE NOT NULL,
-      added_at TEXT DEFAULT (datetime('now'))
+      user_id INTEGER UNIQUE NOT NULL,
+      added_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )`);
+  }
+
+  // 迁移：移除 NodeLoc OAuth，改为用户名+密码登录
+  // 1) users: 新增 password_hash；将 nodeloc_id 放宽为可空（历史数据保留，兼容旧面板）
+  const usersPwCols = db.prepare("PRAGMA table_info(users)").all();
+  if (!usersPwCols.some(c => c.name === 'password_hash')) {
+    db.exec("ALTER TABLE users ADD COLUMN password_hash TEXT");
+  }
+  const nodelocCol = db.prepare("PRAGMA table_info(users)").all().find(c => c.name === 'nodeloc_id');
+  if (nodelocCol && nodelocCol.notnull === 1) {
+    const existingCols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+    const colList = existingCols.join(', ');
+    db.exec("PRAGMA foreign_keys=OFF");
+    db.exec(`
+      CREATE TABLE users_new (
+        id INTEGER PRIMARY KEY,
+        nodeloc_id INTEGER,
+        username TEXT NOT NULL,
+        name TEXT,
+        avatar_url TEXT,
+        trust_level INTEGER DEFAULT 0,
+        email TEXT,
+        sub_token TEXT UNIQUE NOT NULL,
+        is_admin INTEGER DEFAULT 0,
+        is_blocked INTEGER DEFAULT 0,
+        is_frozen INTEGER DEFAULT 0,
+        traffic_limit INTEGER DEFAULT 0,
+        max_devices INTEGER DEFAULT 3,
+        created_at TEXT DEFAULT (datetime('now')),
+        last_login TEXT,
+        telegram_id INTEGER,
+        last_token_reset TEXT DEFAULT '2000-01-01',
+        expires_at TEXT,
+        password_hash TEXT
+      )
+    `);
+    db.exec(`INSERT INTO users_new (${colList}) SELECT ${colList} FROM users`);
+    db.exec("DROP TABLE users");
+    db.exec("ALTER TABLE users_new RENAME TO users");
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_nodeloc_id ON users(nodeloc_id) WHERE nodeloc_id IS NOT NULL");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_users_last_login ON users(last_login)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_users_expires_at ON users(expires_at)");
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id) WHERE telegram_id IS NOT NULL");
+    db.exec("PRAGMA foreign_keys=ON");
+  }
+
+  // username 唯一索引（用于用户名+密码登录）
+  try {
+    const dupes = db.prepare(`
+      SELECT username FROM users GROUP BY username HAVING COUNT(*) > 1
+    `).all();
+    if (dupes.length > 0) {
+      console.warn(`[迁移警告] 存在 ${dupes.length} 个重复用户名，跳过 username 唯一约束`);
+    } else {
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_unique ON users(username)");
+    }
+  } catch (_) {}
+
+  // 2) whitelist: 旧版基于 nodeloc_id，新版改为 user_id
+  const wlCols2 = db.prepare("PRAGMA table_info(whitelist)").all().map(c => c.name);
+  if (wlCols2.includes('nodeloc_id') && !wlCols2.includes('user_id')) {
+    db.exec("PRAGMA foreign_keys=OFF");
+    db.exec(`
+      CREATE TABLE whitelist_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER UNIQUE NOT NULL,
+        added_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+    db.exec(`
+      INSERT OR IGNORE INTO whitelist_new (user_id, added_at)
+      SELECT u.id, w.added_at
+      FROM whitelist w
+      JOIN users u ON u.nodeloc_id = w.nodeloc_id
+    `);
+    db.exec("DROP TABLE whitelist");
+    db.exec("ALTER TABLE whitelist_new RENAME TO whitelist");
+    db.exec("PRAGMA foreign_keys=ON");
   }
 
   // 迁移：traffic_daily 去掉 CASCADE
@@ -530,7 +613,11 @@ module.exports = {
   closeDb,
   reopenDb,
   // 用户
-  findOrCreateUser: (...a) => userRepo.findOrCreateUser(...a),
+  createUser: (...a) => userRepo.createUser(...a),
+  setPassword: (...a) => userRepo.setPassword(...a),
+  verifyUserPassword: (...a) => userRepo.verifyUserPassword(...a),
+  renameUser: (...a) => userRepo.renameUser(...a),
+  deleteUser: (...a) => userRepo.deleteUser(...a),
   getUserBySubToken: (...a) => userRepo.getUserBySubToken(...a),
   getUserById: (...a) => userRepo.getUserById(...a),
   getUserCount: (...a) => userRepo.getUserCount(...a),

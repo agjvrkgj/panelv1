@@ -62,7 +62,7 @@ app.use(helmet({
         'https://fonts.googleapis.com',
       ],
       fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-      // 允许第三方头像/外链图片（如 OAuth 用户头像）
+      // 允许第三方头像/外链图片
       imgSrc: ["'self'", 'data:', 'https:', 'http:'],
       connectSrc: ["'self'", 'wss:', 'ws:'],
       frameSrc: ["'none'"],
@@ -150,8 +150,8 @@ app.get('/api/agent/download', (req, res) => {
 });
 
 // 路由
-app.use('/auth/nodeloc', authLimiter);
-app.use('/auth/callback', authLimiter);
+app.use('/auth/login', authLimiter);
+app.use('/auth/register', authLimiter);
 app.use('/auth', authRoutes);
 app.use('/admin/api', adminLimiter, csrfProtection, adminApiRoutes);
 app.use('/admin', adminRoutes);

@@ -34,24 +34,27 @@ function setSetting(key, value) {
 }
 
 // 白名单操作（节点访问白名单）
-function isInWhitelist(nodeloc_id) {
-  return !!_getDb().prepare('SELECT 1 FROM whitelist WHERE nodeloc_id = ?').get(nodeloc_id);
+function isInWhitelist(userId) {
+  if (!userId) return false;
+  return !!_getDb().prepare('SELECT 1 FROM whitelist WHERE user_id = ?').get(userId);
 }
 
 function getWhitelist() {
   return _getDb().prepare(`
     SELECT w.*, u.username, u.name FROM whitelist w
-    LEFT JOIN users u ON w.nodeloc_id = u.nodeloc_id
+    LEFT JOIN users u ON w.user_id = u.id
     ORDER BY w.added_at DESC
   `).all();
 }
 
-function addToWhitelist(nodeloc_id) {
-  _getDb().prepare('INSERT OR IGNORE INTO whitelist (nodeloc_id) VALUES (?)').run(nodeloc_id);
+function addToWhitelist(userId) {
+  if (!userId) return;
+  _getDb().prepare('INSERT OR IGNORE INTO whitelist (user_id) VALUES (?)').run(userId);
 }
 
-function removeFromWhitelist(nodeloc_id) {
-  _getDb().prepare('DELETE FROM whitelist WHERE nodeloc_id = ?').run(nodeloc_id);
+function removeFromWhitelist(userId) {
+  if (!userId) return;
+  _getDb().prepare('DELETE FROM whitelist WHERE user_id = ?').run(userId);
 }
 
 // 注册白名单

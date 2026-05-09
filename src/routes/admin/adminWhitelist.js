@@ -8,7 +8,7 @@ router.post('/whitelist/add', (req, res) => {
   const { username } = req.body;
   const user = username && db.getAllUsers().find(u => u.username === username.trim());
   if (user) {
-    db.addToWhitelist(user.nodeloc_id);
+    db.addToWhitelist(user.id);
     db.addAuditLog(req.user.id, 'whitelist_add', `添加白名单: ${user.username}`, req.clientIp || req.ip);
     emitSyncAll();
   }
@@ -16,10 +16,11 @@ router.post('/whitelist/add', (req, res) => {
 });
 
 router.post('/whitelist/remove', (req, res) => {
-  const { nodeloc_id } = req.body;
-  if (nodeloc_id) {
-    db.removeFromWhitelist(parseInt(nodeloc_id));
-    db.addAuditLog(req.user.id, 'whitelist_remove', `移除白名单: ID#${nodeloc_id}`, req.clientIp || req.ip);
+  const { user_id } = req.body;
+  const uid = parseInt(user_id, 10);
+  if (uid) {
+    db.removeFromWhitelist(uid);
+    db.addAuditLog(req.user.id, 'whitelist_remove', `移除白名单: ID#${uid}`, req.clientIp || req.ip);
     emitSyncAll();
   }
   res.redirect('/admin#whitelist');

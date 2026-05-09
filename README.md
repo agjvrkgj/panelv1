@@ -22,7 +22,7 @@ Node.js + Express + SQLite，开箱即用，无需 MySQL/Redis，单机即可承
 ## 核心功能
 
 ### 用户体系
-- OAuth2 一键登录（NodeLoc）
+- 用户名 + 密码登录（首次访问自动引导创建第一个管理员）
 - 用户分级（青铜/白银/管理员）、到期管理、流量配额
 - 注册白名单 & 节点访问白名单
 
@@ -123,7 +123,7 @@ npm install
 
 # 配置环境变量
 cp .env.example .env
-# 编辑 .env，填写必填项（SESSION_SECRET、OAuth 配置等）
+# 编辑 .env，设置 SESSION_SECRET 等必填项
 
 # PM2 启动
 pm2 start ecosystem.config.js
@@ -143,10 +143,6 @@ bash install.sh
 | 变量 | 说明 |
 |------|------|
 | `SESSION_SECRET` | 会话加密密钥（随机强密码） |
-| `NODELOC_URL` | NodeLoc 站点地址 |
-| `NODELOC_CLIENT_ID` | OAuth 应用 ID |
-| `NODELOC_CLIENT_SECRET` | OAuth 应用密钥 |
-| `NODELOC_REDIRECT_URI` | OAuth 回调地址 |
 
 更多配置项参见 `.env.example`。
 
@@ -154,7 +150,7 @@ bash install.sh
 
 ## 管理后台
 
-后台入口 `/admin`，首个注册用户自动成为管理员。
+后台入口 `/admin`。首次访问 `/auth/login` 会引导创建第一个管理员账号，后续用户由管理员在后台「用户」页面创建。
 
 | 模块 | 功能 |
 |------|------|

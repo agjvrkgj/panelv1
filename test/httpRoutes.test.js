@@ -10,10 +10,6 @@ const path = require('path');
 if (!process.env.SESSION_SECRET) {
   process.env.SESSION_SECRET = 'test-session-secret';
 }
-if (!process.env.NODELOC_URL) process.env.NODELOC_URL = 'https://example.com';
-if (!process.env.NODELOC_CLIENT_ID) process.env.NODELOC_CLIENT_ID = 'test-client-id';
-if (!process.env.NODELOC_CLIENT_SECRET) process.env.NODELOC_CLIENT_SECRET = 'test-client-secret';
-if (!process.env.NODELOC_REDIRECT_URI) process.env.NODELOC_REDIRECT_URI = 'http://127.0.0.1/auth/callback';
 
 async function startServer(app) {
   const server = await new Promise((resolve) => {
@@ -92,22 +88,99 @@ async function withMockedDatabaseForAdmin(fn) {
   }
 }
 
-test('GET /auth/callback rejects invalid oauth state and redirects to login', async (t) => {
+test('GET /auth/login renders login page', async (t) => {
+  const express = require('express');
   const app = express();
   app.use((req, _res, next) => {
-    req.session = { oauthState: 'expected-state' };
+    req.session = {};
     next();
   });
+  app.use((_req, res, next) => {
+    res.locals.nonce = 'test';
+    res.locals.csrfToken = 'test-csrf';
+    next();
+  });
+  app.set('view engine', 'ejs');
+  app.set('views', require('path').join(__dirname, '..', 'views'));
+
+  const dbPath = require.resolve('../src/services/database');
+  const prevDb = require.cache[dbPath];
+  require.cache[dbPath] = {
+    id: dbPath, filename: dbPath, loaded: true,
+    exports: {
+      getUserCount: () => 0,
+      getUserById: () => null,
+      getUserBySubToken: () => null,
+      addAuditLog: () => {},
+      getDb: () => ({ prepare: () => ({ get: () => null, run: () => ({}) }) }),
+    },
+  };
+  t.after(() => {
+    if (prevDb) require.cache[dbPath] = prevDb; else delete require.cache[dbPath];
+  });
+
+  delete require.cache[require.resolve('../src/routes/auth')];
   app.use('/auth', require('../src/routes/auth'));
 
   const { server, baseUrl } = await startServer(app);
   t.after(() => new Promise((resolve) => server.close(resolve)));
 
-  const resp = await fetch(`${baseUrl}/auth/callback?state=bad-state`, { redirect: 'manual' });
-  assert.equal(resp.status, 302);
-  const location = resp.headers.get('location') || '';
-  assert.ok(location.startsWith('/auth/login?error='));
-  assert.ok(location.includes(encodeURIComponent('登录状态校验失败，请重试')));
+  const resp = await fetch(`${baseUrl}/auth/login`);
+  assert.equal(resp.status, 200);
+  const html = await resp.text();
+  assert.ok(html.includes('<form') || html.includes('创建管理员账号'));
+});
+
+test('POST /auth/login rejects invalid credentials and renders error', async (t) => {
+  const express = require('express');
+  const app = express();
+  app.use(express.urlencoded({ extended: false }));
+  app.use((req, _res, next) => {
+    req.session = {};
+    next();
+  });
+  app.use((_req, res, next) => {
+    res.locals.nonce = 'test';
+    res.locals.csrfToken = 'test-csrf';
+    next();
+  });
+  app.set('view engine', 'ejs');
+  app.set('views', require('path').join(__dirname, '..', 'views'));
+
+  const dbPath = require.resolve('../src/services/database');
+  const prevDb = require.cache[dbPath];
+  require.cache[dbPath] = {
+    id: dbPath, filename: dbPath, loaded: true,
+    exports: {
+      getUserCount: () => 1,
+      getUserById: () => null,
+      getUserBySubToken: () => null,
+      addAuditLog: () => {},
+      getDb: () => ({
+        prepare: () => ({ get: () => null, run: () => ({}) }),
+      }),
+    },
+  };
+  t.after(() => {
+    if (prevDb) require.cache[dbPath] = prevDb; else delete require.cache[dbPath];
+  });
+
+  delete require.cache[require.resolve('../src/routes/auth')];
+  app.use('/auth', require('../src/routes/auth'));
+
+  const { server, baseUrl } = await startServer(app);
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  const body = new URLSearchParams({ username: 'ghost', password: 'totallywrong' }).toString();
+  const resp = await fetch(`${baseUrl}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  // 登录失败渲染登录页（不跳转）
+  assert.equal(resp.status, 200);
+  const html = await resp.text();
+  assert.ok(html.includes('用户名或密码错误'));
 });
 
 test('GET /sub/:token rejects unknown UA in enforce mode', async (t) => {
