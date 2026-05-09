@@ -231,7 +231,7 @@ function nextTokenResetAtMs(user, now = new Date()) {
 }
 
 router.get('/', requireAuth, (req, res) => {
-  const isVip = db.isInWhitelist(req.user.nodeloc_id);
+  const isVip = db.isInWhitelist(req.user.id);
   const user = req.user;
 
   // 已开放 0 级用户访问，不再跳转升级页
@@ -500,7 +500,7 @@ router.get('/sub/:token', subLimiter, (req, res) => {
     }
   }
 
-  const isVip = db.isInWhitelist(user.nodeloc_id);
+  const isVip = db.isInWhitelist(user.id);
   const nodes = db.getAllNodes(true).filter(n => (isVip || user.trust_level >= (n.min_level || 0)) && n.protocol !== 'ss');
   const uuidMap = getUserNodeUuidMap(user.id, nodes);
 
@@ -684,7 +684,7 @@ router.get('/sub6/:token', subLimiter, (req, res) => {
   // 已开放 0 级用户订阅访问
   db.logSubAccess(user.id, clientIP, ua);
 
-  const isVip = db.isInWhitelist(user.nodeloc_id);
+  const isVip = db.isInWhitelist(user.id);
   // 只取 IPv6 + SS 节点
   const rawNodes = db.getAllNodes(true).filter(n =>
     n.ip_version === 6 && n.protocol === 'ss' &&

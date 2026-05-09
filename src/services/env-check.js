@@ -6,10 +6,6 @@ const logger = require('./logger');
 
 const REQUIRED_VARS = [
   'SESSION_SECRET',
-  'NODELOC_URL',
-  'NODELOC_CLIENT_ID',
-  'NODELOC_CLIENT_SECRET',
-  'NODELOC_REDIRECT_URI',
 ];
 
 function validateEnv() {

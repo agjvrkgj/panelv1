@@ -22,7 +22,7 @@ test('traffic_user_total is updated incrementally and used by user list queries'
   db.exec(`
     CREATE TABLE users (
       id INTEGER PRIMARY KEY,
-      nodeloc_id INTEGER UNIQUE NOT NULL,
+      nodeloc_id INTEGER,
       username TEXT NOT NULL,
       name TEXT,
       sub_token TEXT NOT NULL,
@@ -31,6 +31,7 @@ test('traffic_user_total is updated incrementally and used by user list queries'
       is_blocked INTEGER DEFAULT 0,
       is_frozen INTEGER DEFAULT 0,
       trust_level INTEGER DEFAULT 0,
+      password_hash TEXT,
       last_login TEXT
     );
     CREATE TABLE traffic (

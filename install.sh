@@ -46,23 +46,22 @@ if [ ! -f .env ]; then
   echo ""
   echo "⚙️  配置面板"
   read -p "域名 (如 vip.example.com): " DOMAIN
-  read -p "NodeLoc Client ID: " CLIENT_ID
-  read -p "NodeLoc Client Secret: " CLIENT_SECRET
-  
+
   SESSION_SECRET=$(openssl rand -hex 32)
-  
+
   cat > .env << EOF
 PORT=3000
 NODE_ENV=production
 SESSION_SECRET=$SESSION_SECRET
-NODELOC_URL=https://www.nodeloc.com
-NODELOC_CLIENT_ID=$CLIENT_ID
-NODELOC_CLIENT_SECRET=$CLIENT_SECRET
-NODELOC_REDIRECT_URI=https://$DOMAIN/auth/callback
+PANEL_DOMAIN=$DOMAIN
 EOF
   echo "✅ 配置已保存"
 else
-  DOMAIN=$(grep NODELOC_REDIRECT_URI .env | sed 's|.*://||' | sed 's|/.*||')
+  DOMAIN=$(grep PANEL_DOMAIN .env | sed 's/.*=//')
+  if [ -z "$DOMAIN" ]; then
+    read -p "域名 (如 vip.example.com): " DOMAIN
+    echo "PANEL_DOMAIN=$DOMAIN" >> .env
+  fi
   echo "✅ 使用现有配置，域名: $DOMAIN"
 fi
 
@@ -124,5 +123,5 @@ echo "🌐 面板地址: https://$DOMAIN"
 echo "📁 安装目录: $INSTALL_DIR"
 echo "📋 查看日志: pm2 logs vless-panel"
 echo ""
-echo "⚠️  首次使用请到 NodeLoc 创建 OAuth 应用:"
-echo "   回调地址: https://$DOMAIN/auth/callback"
+echo "⚠️  首次访问 https://$DOMAIN 会引导创建第一个管理员账号"
+echo "    后续用户由管理员在后台「用户」页面创建"

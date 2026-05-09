@@ -1,5 +1,27 @@
 <!-- 用户管理 Tab -->
 <div class="tab-panel" data-tab="users">
+  <!-- 创建新用户 -->
+  <div class="glass rounded-2xl p-5 mb-4">
+    <h3 class="text-white text-sm font-medium mb-3">➕ 创建用户</h3>
+    <form id="user-create-form" class="grid grid-cols-1 sm:grid-cols-5 gap-2">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input name="username" type="text" placeholder="用户名 (3-32)" required class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm sm:col-span-2">
+      <input name="password" type="password" placeholder="密码 (≥8)" required class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm sm:col-span-2">
+      <select name="trust_level" class="bg-black/30 text-white px-3 py-2 rounded-xl border border-white/10 text-sm">
+        <option value="0">Lv0</option>
+        <option value="1">Lv1</option>
+        <option value="2">Lv2</option>
+        <option value="3">Lv3</option>
+        <option value="4">Lv4</option>
+      </select>
+      <label class="flex items-center gap-2 text-gray-400 text-xs sm:col-span-4">
+        <input type="checkbox" name="is_admin" class="accent-rose-500"> 设为管理员
+      </label>
+      <button class="bg-rose-600 hover:bg-rose-500 text-white text-xs px-4 py-2 rounded-xl transition">创建</button>
+    </form>
+    <p class="text-gray-600 text-[11px] mt-2">新用户的初始密码请通过安全渠道告知，建议登录后立即修改（后续可接入"修改密码"）</p>
+  </div>
+
   <!-- 用户总数 + 搜索 -->
   <div class="flex items-center justify-between mb-3">
     <span class="text-gray-500 text-xs">共 <span class="text-white font-medium" id="users-total-count">-</span> 个用户</span>
@@ -130,7 +152,7 @@
         _userExpiryById.set(u.id, String(u.expires_at || ''));
         const safeUsername = _escHtml(u.username || '');
         const safeAvatar = _safeAvatarUrl(u.avatar_url);
-        const safeNodeLocId = _escHtml(u.nodeloc_id || '-');
+        const safeUserIdDisplay = _escHtml(u.id || '-');
         const safeTrustLevel = _escHtml(u.trust_level || 0);
         const safeLastLogin = _escHtml(u.last_login || '-');
         const safeUserId = Number(u.id) || 0;
@@ -141,18 +163,18 @@
         const limitText = u.traffic_limit ? _fmtBytes(u.traffic_limit) : '∞';
         const expiryText = u.expires_at ? u.expires_at.slice(0,10) : '永久';
         const expiryClass = u.expires_at && new Date(u.expires_at) < new Date() ? 'text-red-400' : 'text-gray-400';
-        return { u, safeUsername, safeAvatar, safeNodeLocId, safeTrustLevel, safeLastLogin, safeUserId, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass };
+        return { u, safeUsername, safeAvatar, safeUserIdDisplay, safeTrustLevel, safeLastLogin, safeUserId, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass };
       });
 
       // 桌面端表格
-      tbody.innerHTML = rowsHtml.map(({u, safeUsername, safeAvatar, safeNodeLocId, safeTrustLevel, safeLastLogin, safeUserId, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass}) => {
+      tbody.innerHTML = rowsHtml.map(({u, safeUsername, safeAvatar, safeUserIdDisplay, safeTrustLevel, safeLastLogin, safeUserId, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass}) => {
         return `<tr class="border-b border-white/5 hover:bg-white/[0.02]">
           <td class="py-3 px-4 flex items-center gap-2">
             <img src="${safeAvatar}" class="w-6 h-6 rounded-full ring-1 ring-white/10 bg-gray-800" onerror="this.style.display='none'">
             <span class="text-white text-sm">${safeUsername}</span>
             ${u.is_admin ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">管理</span>' : ''}
           </td>
-          <td class="py-3 px-4 text-xs text-gray-500">${safeNodeLocId}</td>
+          <td class="py-3 px-4 text-xs text-gray-500">${safeUserIdDisplay}</td>
           <td class="py-3 px-4 text-xs">${safeTrustLevel}</td>
           <td class="py-3 px-4 text-xs text-gray-400">
             ${_fmtBytes(u.total_traffic || 0)} / <span class="cursor-pointer text-cyan-400 hover:underline" onclick="setTrafficLimitById(${safeUserId}, ${u.traffic_limit || 0})">${limitText}</span>
@@ -163,12 +185,14 @@
           <td class="py-3 px-4 space-x-2">
             <form method="POST" action="/admin/api/users/${safeUserId}/toggle-block" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button class="text-xs ${blockBtnClass} hover:underline">${blockBtnText}</button></form>
             <form method="POST" action="/admin/api/users/${safeUserId}/reset-token" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button type="button" class="text-xs text-amber-400 hover:underline" onclick="_confirm('重置订阅？').then(ok=>{if(ok)this.closest('form').submit()})">重置</button></form>
+            <button type="button" class="text-xs text-cyan-400 hover:underline" onclick="resetUserPassword(${safeUserId}, '${safeUsername}')">改密</button>
+            <button type="button" class="text-xs text-red-400 hover:underline" onclick="deleteUser(${safeUserId}, '${safeUsername}')">删除</button>
           </td>
         </tr>`;
       }).join('');
 
       // 移动端卡片
-      cards.innerHTML = rowsHtml.map(({u, safeUsername, safeAvatar, safeNodeLocId, safeTrustLevel, safeLastLogin, safeUserId, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass}) => {
+      cards.innerHTML = rowsHtml.map(({u, safeUsername, safeAvatar, safeUserIdDisplay, safeTrustLevel, safeLastLogin, safeUserId, statusClass, statusText, blockBtnClass, blockBtnText, limitText, expiryText, expiryClass}) => {
         return `<div class="glass rounded-2xl p-4 space-y-2">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
@@ -179,15 +203,17 @@
             <span class="text-[10px] px-2 py-0.5 rounded-full ${statusClass}">${statusText}</span>
           </div>
           <div class="grid grid-cols-2 gap-1.5 text-xs">
-            <div><span class="text-gray-500">ID</span><span class="block text-gray-400 mt-0.5">${safeNodeLocId}</span></div>
+            <div><span class="text-gray-500">ID</span><span class="block text-gray-400 mt-0.5">${safeUserIdDisplay}</span></div>
             <div><span class="text-gray-500">等级</span><span class="block text-gray-300 mt-0.5">${safeTrustLevel}</span></div>
             <div><span class="text-gray-500">流量</span><span class="block text-gray-400 mt-0.5">${_fmtBytes(u.total_traffic || 0)} / <span class="cursor-pointer text-cyan-400" onclick="setTrafficLimitById(${safeUserId}, ${u.traffic_limit || 0})">${limitText}</span></span></div>
             <div><span class="text-gray-500">到期</span><span class="block mt-0.5 cursor-pointer ${expiryClass}" onclick="setExpiryById(${safeUserId})">${expiryText}</span></div>
             <div class="col-span-2"><span class="text-gray-500">最后活跃</span><span class="text-gray-500 ml-2">${safeLastLogin}</span></div>
           </div>
-          <div class="flex gap-3 pt-1.5 border-t border-white/5">
+          <div class="flex gap-3 pt-1.5 border-t border-white/5 flex-wrap">
             <form method="POST" action="/admin/api/users/${safeUserId}/toggle-block" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button class="text-xs ${blockBtnClass} hover:underline">${blockBtnText}</button></form>
             <form method="POST" action="/admin/api/users/${safeUserId}/reset-token" class="inline"><input type="hidden" name="_csrf" value="${csrfToken}"><button type="button" class="text-xs text-amber-400 hover:underline" onclick="_confirm('重置订阅？').then(ok=>{if(ok)this.closest('form').submit()})">重置</button></form>
+            <button type="button" class="text-xs text-cyan-400 hover:underline" onclick="resetUserPassword(${safeUserId}, '${safeUsername}')">改密</button>
+            <button type="button" class="text-xs text-red-400 hover:underline" onclick="deleteUser(${safeUserId}, '${safeUsername}')">删除</button>
           </div>
         </div>`;
       }).join('');
@@ -243,7 +269,7 @@
     </div>
     <form method="POST" action="/admin/api/register-whitelist/add" class="flex gap-2 mb-4">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <input type="text" name="username" placeholder="输入 NodeLoc 用户名" class="flex-1 bg-black/30 text-white px-4 py-2 rounded-xl border border-white/10 text-sm" required>
+      <input type="text" name="username" placeholder="输入用户名" class="flex-1 bg-black/30 text-white px-4 py-2 rounded-xl border border-white/10 text-sm" required>
       <button class="bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded-xl text-sm transition">添加</button>
     </form>
     <div class="flex flex-wrap gap-2">
@@ -273,8 +299,8 @@
       <% whitelist.forEach(function(w) { %>
         <form method="POST" action="/admin/api/whitelist/remove" class="inline">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <input type="hidden" name="nodeloc_id" value="<%= w.nodeloc_id %>">
-          <button class="glass text-gray-300 px-3 py-1 rounded-full text-xs hover:bg-red-500/20 hover:text-red-300 transition"><%= w.username || ('ID:' + w.nodeloc_id) %> ✕</button>
+          <input type="hidden" name="user_id" value="<%= w.user_id %>">
+          <button class="glass text-gray-300 px-3 py-1 rounded-full text-xs hover:bg-red-500/20 hover:text-red-300 transition"><%= w.username || ('ID:' + w.user_id) %> ✕</button>
         </form>
       <% }); %>
       <% if (whitelist.length === 0) { %><p class="text-gray-600 text-sm">白名单为空</p><% } %>

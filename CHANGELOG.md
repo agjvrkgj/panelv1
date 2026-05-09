@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### 💥 Breaking
+- 移除 NodeLoc OAuth 一键登录，改为**用户名 + 密码**登录方式
+- `users` 表：新增 `password_hash` 列；`nodeloc_id` 放宽为可空（保留历史数据）
+- `whitelist` 表：从基于 `nodeloc_id` 迁移为基于 `user_id`（带 `ON DELETE CASCADE`）
+- 移除依赖 `passport`、`passport-oauth2`
+- 移除环境变量 `NODELOC_URL / NODELOC_CLIENT_ID / NODELOC_CLIENT_SECRET / NODELOC_REDIRECT_URI`
+- 老路由下线：`GET /auth/nodeloc`、`GET /auth/callback`
+- 管理 API `POST /admin/api/whitelist/remove` 表单字段由 `nodeloc_id` 改为 `user_id`
+
+### ✨ Added
+- 新路由 `POST /auth/login`、`GET/POST /auth/register`（首次运行创建首个管理员）
+- 新管理 API：`POST /admin/api/users/create`、`POST /admin/api/users/:id/set-password`、`POST /admin/api/users/:id/delete`
+- 后台「用户」页：创建用户表单、修改密码、删除用户入口
+- `src/utils/password.js`：基于 Node 原生 `crypto.scrypt` 的密码哈希与验证
+
+### 🔧 Migration
+- 启动时 DB 迁移会自动：添加 `users.password_hash` 列、把 `nodeloc_id` 放宽为可空、把 `whitelist` 表从 `nodeloc_id` 改为 `user_id`（原 OAuth 用户通过 `nodeloc_id → users.id` JOIN 完成迁移）
+- 升级后第一次访问 `/auth/login` 会因所有历史账号都没有 `password_hash` 而需要"首次运行"流程；请提前手动给任一管理员写入 `password_hash`，或在空库下直接走首次注册流程
+
+---
+
 ## v1.14.0 - 2026-02-27 (Phase 3 基线)
 
 ### ✨ Added

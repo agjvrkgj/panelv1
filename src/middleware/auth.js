@@ -1,63 +1,5 @@
-const passport = require('passport');
-const OAuth2Strategy = require('passport-oauth2');
 const db = require('../services/database');
-const { emitSyncAll } = require('../services/configEvents');
 
-function setupAuth(app) {
-  passport.use('nodeloc', new OAuth2Strategy({
-    authorizationURL: `${process.env.NODELOC_URL}/oauth-provider/authorize`,
-    tokenURL: `${process.env.NODELOC_URL}/oauth-provider/token`,
-    clientID: process.env.NODELOC_CLIENT_ID,
-    clientSecret: process.env.NODELOC_CLIENT_SECRET,
-    callbackURL: process.env.NODELOC_REDIRECT_URI,
-    scope: ['openid', 'profile']
-  }, async (accessToken, refreshToken, params, profile, done) => {
-    try {
-      // 获取用户信息
-      const res = await fetch(`${process.env.NODELOC_URL}/oauth-provider/userinfo`, {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
-      });
-      if (!res.ok) return done(new Error('获取用户信息失败'));
-      const userInfo = await res.json();
-
-      // 检查注册人数上限（已有用户直接放行，新用户才检查）
-      const existing = db.getUserById(db.getDb().prepare('SELECT id FROM users WHERE nodeloc_id = ?').get(userInfo.id)?.id);
-      if (!existing) {
-        const maxUsers = parseInt(db.getSetting('max_users')) || 0;
-        if (maxUsers > 0 && db.getUserCount() >= maxUsers) {
-          // 注册白名单用户可以突破限制
-          if (!db.isInRegisterWhitelist(userInfo.username)) {
-            return done(null, false, { message: '注册已满，暂不接受新用户' });
-          }
-        }
-      }
-
-      // 创建或更新用户
-      const user = db.findOrCreateUser(userInfo);
-      if (user.is_blocked) {
-        return done(null, false, { message: '账号已被封禁' });
-      }
-
-      // 异步同步节点配置（新用户需要把 UUID 推送到节点）
-      emitSyncAll();
-
-      return done(null, user);
-    } catch (err) {
-      return done(err);
-    }
-  }));
-
-  passport.serializeUser((user, done) => done(null, user.id));
-  passport.deserializeUser((id, done) => {
-    const user = db.getUserById(id);
-    done(null, user || false);
-  });
-
-  app.use(passport.initialize());
-  app.use(passport.session());
-}
-
-// 登录检查中间件
 // 用户活跃时间更新缓存（节流5分钟，避免频繁写库）
 const _lastActiveCache = new Map();
 const LAST_ACTIVE_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -75,8 +17,55 @@ function cleanupLastActiveCache(now = Date.now()) {
   }
 }
 
+// 会话中间件：将 req.session.userId 解析为 req.user，并暴露类 passport 接口
+function sessionAuth(req, res, next) {
+  const uid = req.session && req.session.userId;
+  if (uid) {
+    const user = db.getUserById(uid);
+    if (user) {
+      req.user = user;
+    } else {
+      // 用户已被删除：清理 session 防止僵尸登录
+      req.session.userId = null;
+    }
+  }
+
+  req.isAuthenticated = function isAuthenticated() {
+    return !!req.user;
+  };
+
+  function login(user, cb) {
+    try {
+      if (!user || !user.id) {
+        const err = new Error('无效用户');
+        return cb ? cb(err) : undefined;
+      }
+      req.session.userId = user.id;
+      req.user = user;
+      if (cb) return cb(null);
+    } catch (err) {
+      if (cb) return cb(err);
+    }
+  }
+  req.login = login;
+  req.logIn = login;
+
+  req.logout = function logout(cb) {
+    req.user = null;
+    if (req.session) req.session.userId = null;
+    if (typeof cb === 'function') return cb();
+  };
+
+  next();
+}
+
+function setupAuth(app) {
+  app.use(sessionAuth);
+}
+
+// 登录检查中间件
 function requireAuth(req, res, next) {
-  if (req.isAuthenticated() && !req.user.is_blocked) {
+  if (req.isAuthenticated && req.isAuthenticated() && !req.user.is_blocked) {
     // 更新最后活跃时间（每5分钟最多写一次）
     const userId = req.user.id;
     const now = Date.now();
@@ -85,7 +74,6 @@ function requireAuth(req, res, next) {
     if (now - last > 5 * 60 * 1000) {
       _lastActiveCache.set(userId, now);
       try {
-        const db = require('../services/database');
         db.getDb().prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(userId);
       } catch {}
     }
@@ -96,7 +84,7 @@ function requireAuth(req, res, next) {
 
 // 管理员检查中间件
 function requireAdmin(req, res, next) {
-  if (req.isAuthenticated() && req.user.is_admin && !req.user.is_blocked) return next();
+  if (req.isAuthenticated && req.isAuthenticated() && req.user.is_admin && !req.user.is_blocked) return next();
   res.status(403).json({ error: '需要管理员权限' });
 }
 

@@ -21,10 +21,6 @@ SqliteStore.prototype.startInterval = function startIntervalForTest() {
 if (!process.env.SESSION_SECRET) {
   process.env.SESSION_SECRET = 'test-session-secret';
 }
-if (!process.env.NODELOC_URL) process.env.NODELOC_URL = 'https://example.com';
-if (!process.env.NODELOC_CLIENT_ID) process.env.NODELOC_CLIENT_ID = 'test-client-id';
-if (!process.env.NODELOC_CLIENT_SECRET) process.env.NODELOC_CLIENT_SECRET = 'test-client-secret';
-if (!process.env.NODELOC_REDIRECT_URI) process.env.NODELOC_REDIRECT_URI = 'http://127.0.0.1/auth/callback';
 
 async function startServer(app) {
   const server = await new Promise((resolve) => {

@@ -27,9 +27,9 @@ function getNodeAllUserUuids(nodeId) {
     SELECT un.*, u.username FROM user_node_uuid un
     JOIN users u ON un.user_id = u.id
     JOIN nodes n ON un.node_id = n.id
-    LEFT JOIN whitelist w ON u.nodeloc_id = w.nodeloc_id
+    LEFT JOIN whitelist w ON u.id = w.user_id
     WHERE un.node_id = ? AND u.is_blocked = 0 AND u.is_frozen = 0
-      AND (w.nodeloc_id IS NOT NULL OR u.trust_level >= n.min_level)
+      AND (w.user_id IS NOT NULL OR u.trust_level >= n.min_level)
   `).all(nodeId);
 }
 
